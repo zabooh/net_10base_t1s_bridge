@@ -96,6 +96,25 @@ cli.bat --port COM8 --read 3 "reset"
   `MSYS_NO_PATHCONV=1 cmd /c "C:\work\t1s_bridge\bridge\harmony\net_10base_t1s\apps\tcpip_iperf_lan865x\flash.bat --list" < /dev/null`.
 - **CLI-Antworten sind asynchron** — nach einem Kommando auf die Antwortzeile warten
   (`cli.bat --read N "..."`), nicht sofort das nächste schicken.
+- **`cli.py --read N` wartet bewusst *mindestens* N Sekunden, bevor es sich beendet** (`drain()`
+  hat eine feste untere Zeitschranke). Ein äußerer Bash-`timeout M`-Wrapper mit `M < N` killt den
+  Prozess deshalb garantiert vorzeitig — unabhängig davon, ob das Board überhaupt geantwortet
+  hätte. **2026-08-30 real passiert:** `timeout 15 ... cli.py --read 20 "reset"` lieferte
+  Exit-Code 124 und wurde fälschlich als „Board hängt" gedeutet, obwohl das Board sauber gebootet
+  war — derselbe Aufruf ohne `timeout`-Wrapper (oder mit `M > N`) zeigte sofort die korrekten
+  Boot-Meldungen. Regel: **`cli.py` grundsätzlich ohne zusätzlichen `timeout`-Wrapper aufrufen**
+  (es terminiert von selbst deterministisch nach `--read`-Sekunden); falls doch ein äußeres
+  Sicherheitsnetz nötig ist, `M` mindestens `N + 15s` setzen. Vor einer „Board hängt"-Diagnose
+  zusätzlich per pyOCD gegenchecken, nicht auf ein einzelnes CLI-Timeout verlassen — Rezept:
+  ```
+  pyocd commander -t atsame54p20a -u <probe-id> -M pre-reset --elf <production.elf> -c "reg" -c "exit"
+  xc32-addr2line.exe -e <production.elf> -f -C <pc-hex> <lr-hex>
+  ```
+  `-M pre-reset` resettet und hält sofort an; `reg` zeigt PC/LR, `addr2line` löst sie zu
+  Funktion+Zeile auf. Deutlich zuverlässiger als die serielle Konsole, um zu unterscheiden
+  „Board hängt wirklich fest" (PC bleibt bei wiederholtem Aufruf/nach Wartezeit identisch) von
+  „läuft normal, nur die serielle Ausgabe kam nicht an" (PC liegt irgendwo im Hauptprogramm,
+  ändert sich zwischen zwei Aufrufen).
 - `cli.py`s stdout-Encoding kann bei Nicht-ASCII-Bytes vom Board (z. B. Boot-Log direkt nach
   `reset`) unter Windows crashen (`UnicodeEncodeError`, cp1252-Konsole) — mit
   `PYTHONIOENCODING=utf-8` davor umgehen.
@@ -172,11 +191,43 @@ cli.bat --port COM8 --read 3 "reset"
   aktivieren, dann Generate — MCC erzeugt daraus automatisch den
   `TCPIP_STACK_USE_MAC_BRIDGE`-Block in `configuration.h` sowie `tcpipMacbridgeTable`/
   `tcpipBridgeInitData` und den `{TCPIP_MODULE_MAC_BRIDGE, ...}`-Eintrag in `initialization.c`.
-  **Stand 2026-08-30: noch nicht aktiviert — erst wenn GMAC überhaupt sauber hochkommt.**
+  **Seit 2026-08-30 aktiviert und als voll funktionierende End-zu-End-Bridge bestätigt**
+  (Ping-Matrix, `bridge status/stats/fdb`, siehe `docs\session-log.md`).
 - **`nbproject\configurations.xml`s `languageToolchainVersion`** kann vom tatsächlich beim Link
   verwendeten Compiler abweichen (bei uns `4.60` eingetragen, real gelinkt wurde mit `v5.10`,
   sichtbar am `xc32-gcc.exe`-Pfad im Build-Log) — im Zweifel den Pfad im Build-Log prüfen, nicht
   nur dieses Feld.
+- **Silizium-Erratum: `OSCCTRL_DPLLSYNCBUSY.DPLLRATIO` löscht sich nie**, obwohl die DPLL korrekt
+  einrastet — Microchip Silicon Errata **DS80000748K** ("SAM D5x/E5x Family Silicon Errata and
+  Data Sheet Clarification"), Punkt **2.13.2 „FDPLL Ratio in DPLLnRATIO"**, betrifft beide
+  Silizium-Revisionen (A und D), also auch dieses Board. Der MCC-generierte, unveränderte
+  `FDPLL0_Initialize()`-Code in `peripheral\clock\plib_clock.c` wartet dort mit einer
+  unbegrenzten `while(...)`-Schleife → **kompletter Boot-Hang, noch vor jeglichem App-Code**,
+  reproduzierbar abhängig von scheinbar unzusammenhängenden Linker-Adressverschiebungen
+  anderswo im Image (2026-08-30/31 stundenlang bisektiert, siehe `docs\session-log.md`).
+  Per direktem Registerzugriff bestätigt: `DPLLRATIO` (`0x40001034`) übernimmt den Wert korrekt,
+  `DPLLSTATUS` (`0x40001040`) zeigt `LOCK|CLKRDY` — nur `DPLLSYNCBUSY` (`0x4000103C`) bleibt
+  fälschlich hängen. **Fix (dokumentierte Ausnahme, kein MCC-GUI-Feld dafür vorhanden):** in
+  `FDPLL0_Initialize()` alle drei Wait-Schleifen (`DPLLSYNCBUSY.DPLLRATIO`, `.ENABLE`,
+  `DPLLSTATUS.LOCK|CLKRDY`) mit einer Zählschranke (`CLOCK_DPLL0_SYNC_TIMEOUT = 2000`) versehen
+  statt endlos zu pollen — nach jedem Generate-Lauf, der `plib_clock.c` anfasst, erneut
+  anwenden. **Achtung beim Debuggen dieser Datei:** ein naiver `pyocd commander -M attach -c
+  halt`-Snapshot zeigte den PC in `__dinit_clear`/C-Runtime-Startup — sowohl beim hängenden ALS
+  AUCH beim bekannt guten Build (Sampling-Artefakt dieses Attach-Modus, keine echte Fundstelle).
+  Verlässlich sind nur direkte Registerwerte (`DPLLSTATUS`/`DPLLRATIO`/`DPLLSYNCBUSY`) oder
+  `-M pre-reset` mit PC-Vergleich über mehrere Aufrufe.
+- **App-Bug (kein MCC-Thema, aber derselbe Boot-Hang verdeckte ihn):** `MIRROR_Initialize()`
+  (`port_mirror.c`) alloziert sofort 8 Paketpuffer aus dem TCP/IP-Heap
+  (`TCPIP_PKT_PacketAlloc()`). Wird sie — wie zunächst portiert — direkt aus
+  `APP_Initialize()` aufgerufen, crasht das mit einem echten Bus-Fault (Wildpointer,
+  `BFAR` außerhalb von Flash/RAM), weil `APP_Initialize()` noch synchron innerhalb von
+  `SYS_Initialize()` läuft (`initialization.c`, direkt nach `TCPIP_STACK_Init()`), der TCP/IP-
+  Heap zu diesem Zeitpunkt aber noch nicht zwingend fertig eingerichtet ist (`TCPIP_STACK_Init()`
+  stößt die eigentliche, asynchrone Stack-Initialisierung nur an). **Fix:** `MIRROR_Initialize()`
+  in `app.c`s bereits vorhandene `APP_STATE_SERVICE_TASKS`-Phase verschoben (dieselbe Stelle, an
+  der schon Paket-Handler-Registrierung und `env_apply()` auf einen laufenden Stack warten).
+  Die anderen drei portierten Module (`lan865x_diag`/`noip_test`/`testserver`) registrieren in
+  ihrer `_Initialize()` nur CLI-Kommandos (kein Heap-Zugriff) und sind davon nicht betroffen.
 
 ---
 

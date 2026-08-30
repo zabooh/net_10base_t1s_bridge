@@ -963,6 +963,11 @@
       </logicalFolder>
       <itemPath>../src/app.c</itemPath>
       <itemPath>../src/main.c</itemPath>
+      <itemPath>../src/env.c</itemPath>
+      <itemPath>../src/lan865x_diag.c</itemPath>
+      <itemPath>../src/port_mirror.c</itemPath>
+      <itemPath>../src/noip_test.c</itemPath>
+      <itemPath>../src/testserver.c</itemPath>
     </logicalFolder>
   </logicalFolder>
   <projectmakefile>Makefile</projectmakefile>
@@ -1223,7 +1228,7 @@
         <property key="memories.programmemory.ranges" value="0-fffff"/>
         <property key="poweroptions.powerenable" value="false"/>
         <property key="programmerToGoFilePath"
-                  value="C:/work/t1s_bridge/bridge/harmony/net_10base_t1s/apps/tcpip_iperf_lan865x/firmware/tcpip_iperf_lan865x.X/debug/default/tcpip_iperf_lan865x_ptg"/>
+                  value="D:/SVN/net_10Base_t1s_mc4/apps/tcpip_iperf_lan865x/firmware/tcpip_iperf_lan865x.X/debug/default/tcpip_iperf_lan865x_ptg"/>
         <property key="programoptions.eraseb4program" value="true"/>
         <property key="programoptions.preservedataflash" value="false"/>
         <property key="programoptions.preservedataflash.ranges"

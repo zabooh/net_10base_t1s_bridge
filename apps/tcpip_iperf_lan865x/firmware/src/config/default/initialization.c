@@ -46,6 +46,11 @@
 #include "configuration.h"
 #include "definitions.h"
 #include "device.h"
+/* HAND-PATCH to MCC-generated code, documented exception (CLAUDE.md section 3):
+   ENV_Init()/env_mac_str() need to run before TCPIP_STACK_Init() below, to feed
+   the persisted MAC/PLCA config into the driver init data. Re-apply this whole
+   block after every regenerate that touches this file. */
+#include "env.h"
 
 
 // ****************************************************************************
@@ -86,7 +91,10 @@
 // <editor-fold defaultstate="collapsed" desc="LAN865X Driver Initialization Data">
 
 /* LAN865X Driver Configuration */
-const DRV_LAN865X_Configuration drvLan865xInitData[] = {
+/* HAND-PATCH: `const` dropped so ENV_Init()'s persisted PLCA node id/count can
+   be written into this table below, before TCPIP_STACK_Init() reads it. See
+   CLAUDE.md section 3. */
+DRV_LAN865X_Configuration drvLan865xInitData[] = {
 {
     .spiDrvIndex =          DRV_LAN865X_SPI_DRIVER_INSTANCE_IDX0,
     .spiChipSelectPin =     DRV_LAN865X_SPI_CS_IDX0,
@@ -351,6 +359,13 @@ TCPIP_STACK_HEAP_INTERNAL_CONFIG tcpipHeapConfig =
 };
 
 
+/* HAND-PATCH: writable MAC address string buffers. The const TCPIP_HOSTS_CONFIGURATION
+   array below holds pointers to these, so the struct stays const while the strings are
+   filled at runtime from the persistent env (see CLAUDE.md section 3) by
+   ENV_Init()+env_mac_str() just before TCPIP_STACK_Init(). */
+static char s_macAddrStr0[18] = TCPIP_NETWORK_DEFAULT_MAC_ADDR_IDX0;
+static char s_macAddrStr1[18] = TCPIP_NETWORK_DEFAULT_MAC_ADDR_IDX1;
+
 const TCPIP_NETWORK_CONFIG __attribute__((unused))  TCPIP_HOSTS_CONFIGURATION[] =
 {
 
@@ -360,7 +375,7 @@ const TCPIP_NETWORK_CONFIG __attribute__((unused))  TCPIP_HOSTS_CONFIGURATION[] 
     {
         .interface = TCPIP_NETWORK_DEFAULT_INTERFACE_NAME_IDX0,
         .hostName = TCPIP_NETWORK_DEFAULT_HOST_NAME_IDX0,
-        .macAddr = TCPIP_NETWORK_DEFAULT_MAC_ADDR_IDX0,
+        .macAddr = s_macAddrStr0,
         .ipAddr = TCPIP_NETWORK_DEFAULT_IP_ADDRESS_IDX0,
         .ipMask = TCPIP_NETWORK_DEFAULT_IP_MASK_IDX0,
         .gateway = TCPIP_NETWORK_DEFAULT_GATEWAY_IDX0,
@@ -378,7 +393,7 @@ const TCPIP_NETWORK_CONFIG __attribute__((unused))  TCPIP_HOSTS_CONFIGURATION[] 
     {
         .interface = TCPIP_NETWORK_DEFAULT_INTERFACE_NAME_IDX1,
         .hostName = TCPIP_NETWORK_DEFAULT_HOST_NAME_IDX1,
-        .macAddr = TCPIP_NETWORK_DEFAULT_MAC_ADDR_IDX1,
+        .macAddr = s_macAddrStr1,
         .ipAddr = TCPIP_NETWORK_DEFAULT_IP_ADDRESS_IDX1,
         .ipMask = TCPIP_NETWORK_DEFAULT_IP_MASK_IDX1,
         .gateway = TCPIP_NETWORK_DEFAULT_GATEWAY_IDX1,
@@ -785,9 +800,38 @@ void SYS_Initialize ( void* data )
     /* Initialize EMULATED_EEPROM0 Library Instance */
     sysObj.libEMULATED_EEPROM0 = EMU_EEPROM_Initialize(EMULATED_EEPROM0, (SYS_MODULE_INIT *)NULL);
 
-    /* MISRA C-2012 Rule 11.3, 11.8 deviated below. Deviation record ID -  
+    /* HAND-PATCH to MCC-generated code, documented exception (CLAUDE.md section 3):
+     * Persistent config: load from the Emulated EEPROM (seed on first boot, incl. a
+     * serial-derived per-board MAC), then fill the MAC strings before the stack reads
+     * them. The MAC is env-stored and changeable via 'setenv mac0/mac1' + 'saveenv'.
+     * Re-apply this whole block after every regenerate that touches this file. */
+    ENV_Init();
+    env_mac_str(0, s_macAddrStr0);
+    env_mac_str(1, s_macAddrStr1);
+
+    /* Same idea for the PLCA node ID/count: drvLan865xInitData[] otherwise ships the
+     * compile-time default, which DRV_LAN865X's own init state machine writes to
+     * PLCA_CTRL1 and only THEN enables TX/RX - a node that is live on the bus with the
+     * wrong PLCA identity for the several seconds it takes app.c's env_apply() to
+     * correct it. Overwriting the table here, before TCPIP_STACK_Init() triggers
+     * DRV_LAN865X_Initialize()'s one-time memcpy of it into the running instance, means
+     * PLCA_CTRL1 is correct on the very first write - no window where the node is on
+     * the bus with the wrong identity. env_apply() (called later, from app.c) still
+     * matters for a live 'setenv plca_id/plca_cnt' + 'saveenv' change while running.
+     *
+     * NOTE: unlike the sister project (t1s_100baset_bridge), this project's
+     * DRV_LAN865X_Configuration has no `suppressTx` field - that field is itself a
+     * hand-patch to drv_lan865x.h/drv_lan865x_api.c there, not something MCC generates.
+     * Porting it would mean extending a generated struct's type, not just its values -
+     * out of scope for this port. The 'sniffer' console command (port_mirror.c) still
+     * provides live TXD suppression at runtime; only *persisting sniffer=1 so it is
+     * suppressed from the very first init step* is not available here. */
+    drvLan865xInitData[0].nodeId    = env_plca_id();
+    drvLan865xInitData[0].nodeCount = env_plca_cnt();
+
+    /* MISRA C-2012 Rule 11.3, 11.8 deviated below. Deviation record ID -
     H3_MISRAC_2012_R_11_3_DR_1 & H3_MISRAC_2012_R_11_8_DR_1*/
-        
+
     sysObj.sysTime = SYS_TIME_Initialize(SYS_TIME_INDEX_0, (SYS_MODULE_INIT *)&sysTimeInitData);
     
     /* MISRAC 2012 deviation block end */

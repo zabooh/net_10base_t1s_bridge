@@ -30,11 +30,19 @@
 #include "app.h"
 #include "tcpip/tcpip.h"
 #include <stdio.h>              /* snprintf - DumpMem() line formatting */
-#include <stdlib.h>             /* strtoul - cmd_mem_dump() argument parsing */
-#include <string.h>             /* strcmp - TelnetAuthenticationHandler() credential check */
+#include <stdlib.h>             /* strtoul - CLI argument parsing */
+#include <string.h>             /* strcmp, memcpy */
 #include "system/console/sys_console.h"
 #include "system/command/sys_command.h"
+#include "system/time/sys_time.h"
 #include "config/default/library/tcpip/telnet.h"
+#define TCPIP_THIS_MODULE_ID    TCPIP_MODULE_MANAGER
+#include "config/default/library/tcpip/src/tcpip_packet.h"
+#include "env.h"
+#include "lan865x_diag.h"
+#include "port_mirror.h"
+#include "noip_test.h"
+#include "testserver.h"
 
 // *****************************************************************************
 // *****************************************************************************
@@ -64,9 +72,6 @@ APP_DATA appData;
 // Section: Application Callback Functions
 // *****************************************************************************
 // *****************************************************************************
-
-/* TODO:  Add any necessary callback functions.
-*/
 
 /* initialization.c declares TCPIP_STACK_InitCallback as extern and hands its
    address to TCPIP_STACK_Init()->TCPIP_STACK_Initialize(), but never defines
@@ -121,9 +126,249 @@ const void* TelnetHandlerParam;
 // *****************************************************************************
 // *****************************************************************************
 
+bool pktEth0Handler(TCPIP_NET_HANDLE hNet, TCPIP_MAC_PACKET* rxPkt, uint16_t frameType, const void* hParam);
+const void *MyEth0HandlerParam;
 
-/* TODO:  Add any necessary local functions.
-*/
+bool pktEth1Handler(TCPIP_NET_HANDLE hNet, TCPIP_MAC_PACKET* rxPkt, uint16_t frameType, const void* hParam);
+const void *MyEth1HandlerParam;
+
+static void DumpMem(uint32_t addr, uint32_t count);
+static bool Command_Init(void);
+
+static uint32_t ipdump_mode = 0;
+static uint32_t my_delay_time = 0;
+
+static SYS_TIME_HANDLE timerHandle;
+
+/* How fast the cooperative main loop actually spins - ported from the sister
+ * project alongside 'stats', where it is used to help separate the main-loop
+ * cadence from the link/PLCA as a throughput ceiling. Incremented once per
+ * APP_STATE_IDLE iteration; BRIDGE_TimerCallback (1 Hz) snapshots the delta
+ * into idle_cycles_per_sec, printed by 'stats'. */
+static volatile uint32_t s_idle_cycle_count = 0u;
+static uint32_t s_idle_cycles_per_sec = 0u;
+
+/* =========================================================
+ * Deferred Packet Logging
+ * =========================================================
+ * Packet handlers store metadata into a ring buffer instead
+ * of calling SYS_CONSOLE_PRINT()/DumpMem() directly.
+ * APP_Tasks() drains the buffer (max 10 entries per call). */
+
+#define PKT_LOG_BUF_SIZE    64u   /* ring buffer capacity; must be a power of 2 */
+/* Full-frame capture: frame stored in shared pool (up to PKT_LOG_MAX_FRAME_SIZE bytes each) */
+#define PKT_LOG_MAX_FRAMES     16u    /* number of full-size frames bufferable in pool */
+#define PKT_LOG_MAX_FRAME_SIZE 1518u  /* max bytes per frame (standard Ethernet MTU)  */
+
+typedef enum {
+    PKT_LOG_NOIP = 0,  /* NoIP (0x88B5) frame from eth0 */
+    PKT_LOG_ETH0 = 2,  /* generic frame from eth0        */
+    PKT_LOG_ETH1 = 3,  /* generic frame from eth1        */
+} pkt_log_type_t;
+
+typedef struct {
+    uint64_t       timestamp;    /* SYS_TIME_Counter64Get()                    */
+    uint32_t       pkt_counter;  /* per-handler packet counter                 */
+    uint32_t       noip_seq;     /* NoIP sequence number                       */
+    uint16_t       frame_type;   /* EtherType                                  */
+    uint16_t       length;       /* actual frame length in bytes               */
+    uint32_t       data_offset;  /* offset into frame_data_pool[]              */
+    uint16_t       data_len;     /* bytes stored in pool (may be 0 if dropped) */
+    uint8_t        iface;        /* 0 = eth0, 1 = eth1                         */
+    uint8_t        truncated;    /* 1 if frame data was truncated to fit pool  */
+    pkt_log_type_t log_type;     /* entry classification                       */
+    uint8_t        mac_src[6];   /* source MAC (extracted separately)          */
+} PKT_LOG_ENTRY;
+
+typedef struct {
+    PKT_LOG_ENTRY     entries[PKT_LOG_BUF_SIZE];
+    volatile uint32_t write_idx;     /* updated only by packet handlers  */
+    volatile uint32_t read_idx;      /* updated only by APP_Tasks        */
+    volatile uint32_t overflow_cnt;
+    volatile uint32_t total_logged;
+} PKT_LOG_BUF;
+
+/* No explicit initializer: static-duration objects are zero-initialized by the
+ * C standard regardless, and leaving it implicit lets the compiler place this
+ * (and frame_data_pool below) in .bss. */
+static PKT_LOG_BUF pkt_log;
+
+/* Shared circular pool for storing complete frame bytes.
+ * Holds up to PKT_LOG_MAX_FRAMES full-size Ethernet frames.
+ * Aligned to 4 bytes for efficient ARM word-aligned access. */
+#define FRAME_DATA_POOL_SIZE  ((uint32_t)PKT_LOG_MAX_FRAMES * (uint32_t)PKT_LOG_MAX_FRAME_SIZE)
+
+typedef struct {
+    uint8_t  pool[FRAME_DATA_POOL_SIZE]; /* circular frame data storage           */
+    uint32_t write_offset;               /* next write position in pool (0-based) */
+} FRAME_DATA_POOL;
+
+/* No explicit initializer - see pkt_log's comment above. */
+static FRAME_DATA_POOL frame_data_pool __attribute__((aligned(4)));
+
+/* Lock-free single-producer/single-consumer ring buffer write.
+ * On ARM Cortex-M, 32-bit aligned stores are single-instruction atomic.
+ * write_idx is committed last so the reader never observes a partial entry.
+ * Newest entries are dropped when the buffer is full.
+ *
+ * frame_data/frame_len provide the complete frame bytes to copy into the
+ * shared pool.  The pool write_offset is advanced after the copy.
+ * Wraparound safety: if the frame does not fit at the current write_offset
+ * the function attempts to wrap to offset 0.  It only wraps if no pending
+ * log entry references data in [0, copy_len), otherwise the frame is
+ * truncated to the remaining bytes at the end of the pool.
+ */
+static void PktLog_Write(PKT_LOG_ENTRY *entry,
+                         const uint8_t *frame_data, uint16_t frame_len)
+{
+    uint32_t next = (pkt_log.write_idx + 1u) & (PKT_LOG_BUF_SIZE - 1u);
+    if (next == pkt_log.read_idx) {
+        pkt_log.overflow_cnt++;
+        return; /* ring buffer full - drop newest entry */
+    }
+
+    /* Clamp captured length to the maximum supported frame size */
+    uint16_t copy_len = (frame_len > (uint16_t)PKT_LOG_MAX_FRAME_SIZE)
+                        ? (uint16_t)PKT_LOG_MAX_FRAME_SIZE : frame_len;
+
+    uint32_t pool_offset    = frame_data_pool.write_offset;
+    uint8_t  truncated_flag = 0u;
+
+    if (frame_data != NULL && copy_len > 0u) {
+        uint32_t remaining = FRAME_DATA_POOL_SIZE - frame_data_pool.write_offset;
+
+        if ((uint32_t)copy_len > remaining) {
+            /* Frame does not fit at the current write position.
+             * Attempt to wrap to the beginning of the pool.
+             * This is safe only when no pending entry holds data in [0, copy_len). */
+            bool ring_empty = (pkt_log.read_idx == pkt_log.write_idx);
+            bool wrap_safe  = ring_empty ||
+                              (pkt_log.entries[pkt_log.read_idx].data_offset >= (uint32_t)copy_len);
+
+            if (wrap_safe) {
+                /* Wrap: restart from pool beginning */
+                pool_offset = 0u;
+            } else {
+                /* Cannot wrap safely - truncate to whatever space remains */
+                copy_len       = (uint16_t)remaining;
+                truncated_flag = 1u;
+            }
+        }
+
+        if (copy_len > 0u) {
+            memcpy(&frame_data_pool.pool[pool_offset], frame_data, copy_len);
+            /* Advance the pool write pointer; reset to 0 if we exactly filled the end */
+            uint32_t new_offset = pool_offset + (uint32_t)copy_len;
+            frame_data_pool.write_offset = (new_offset >= FRAME_DATA_POOL_SIZE) ? 0u : new_offset;
+        }
+    }
+
+    /* Store pool reference and flags in the ring entry */
+    entry->data_offset = pool_offset;
+    entry->data_len    = copy_len;
+    entry->truncated   = truncated_flag;
+
+    pkt_log.entries[pkt_log.write_idx] = *entry;
+    pkt_log.total_logged++;
+    pkt_log.write_idx = next; /* commit - must be the last store */
+}
+
+/* Read one entry from the ring buffer; returns false if empty. */
+static bool PktLog_Read(PKT_LOG_ENTRY *entry)
+{
+    if (pkt_log.read_idx == pkt_log.write_idx) {
+        return false; /* buffer empty */
+    }
+    *entry = pkt_log.entries[pkt_log.read_idx];
+    pkt_log.read_idx = (pkt_log.read_idx + 1u) & (PKT_LOG_BUF_SIZE - 1u);
+    return true;
+}
+
+void BRIDGE_TimerCallback(uintptr_t context) {
+    static uint32_t s_last_idle_count = 0u;
+    uint32_t now;
+    (void)context;
+
+    if (my_delay_time) my_delay_time--;
+
+    now = s_idle_cycle_count;
+    s_idle_cycles_per_sec = now - s_last_idle_count;   /* wraps correctly even if s_idle_cycle_count overflows */
+    s_last_idle_count = now;
+}
+
+// Help command for Test group
+static void test_help(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
+    (void)pCmdIO; (void)argc; (void)argv;
+    SYS_CONSOLE_PRINT("Test group commands:\n\r");
+    SYS_CONSOLE_PRINT("  help                         - Show this help\n\r");
+    SYS_CONSOLE_PRINT("  timestamp                    - Show build timestamp\n\r");
+    SYS_CONSOLE_PRINT("  uptime                       - Time since boot/last reset\n\r");
+    SYS_CONSOLE_PRINT("  ipdump <mode>                - Dump RX IP packets (0=off, 1=eth0, 2=eth1, 3=both)\n\r");
+    SYS_CONSOLE_PRINT("  stats                        - Show TX/RX counters for eth0 and eth1\n\r");
+    SYS_CONSOLE_PRINT("  meminfo                      - Free memory on the C-runtime heap and the TCP/IP heap\n\r");
+    SYS_CONSOLE_PRINT("  dump <addr> <count>          - Dump memory (hex addr, count)\n\r");
+    SYS_CONSOLE_PRINT("  peek <addr> [size]           - Read a single value (size=1|2|4)\n\r");
+    SYS_CONSOLE_PRINT("  poke <addr> <val> [size]     - Write a single value (size=1|2|4)\n\r");
+    SYS_CONSOLE_PRINT("  logclear                     - Clear deferred packet log buffer\n\r");
+    SYS_CONSOLE_PRINT("  logstat                      - Show deferred log statistics\n\r");
+    SYS_CONSOLE_PRINT("\n\rLAN865x registers, test modes, PLCA: see 'lanhelp'\n\r");
+    SYS_CONSOLE_PRINT("Port mirror/sniffer: see 'mirror'/'sniffer'. Raw frame test: see 'noip_send'.\n\r");
+    SYS_CONSOLE_PRINT("TCP echo server: see 'testserver'. Persistent config: see 'showenv'.\n\r");
+}
+
+// stats command: print TX/RX software counters for both interfaces
+static void cmd_stats(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
+    TCPIP_MAC_RX_STATISTICS rxStats;
+    TCPIP_MAC_TX_STATISTICS txStats;
+    const char *ifNames[] = {"eth0", "eth1"};
+    int i;
+    (void)pCmdIO; (void)argc; (void)argv;
+    for (i = 0; i < 2; i++) {
+        TCPIP_NET_HANDLE netH = TCPIP_STACK_NetHandleGet(ifNames[i]);
+        if (netH == NULL) {
+            SYS_CONSOLE_PRINT("%s: not found\n\r", ifNames[i]);
+            continue;
+        }
+        if (TCPIP_STACK_NetMACStatisticsGet(netH, &rxStats, &txStats)) {
+            SYS_CONSOLE_PRINT("%s TX: ok=%d err=%d qFull=%d pend=%d\n\r",
+                ifNames[i], txStats.nTxOkPackets, txStats.nTxErrorPackets,
+                txStats.nTxQueueFull, txStats.nTxPendBuffers);
+            SYS_CONSOLE_PRINT("%s RX: ok=%d err=%d nobufs=%d pend=%d\n\r",
+                ifNames[i], rxStats.nRxOkPackets, rxStats.nRxErrorPackets,
+                rxStats.nRxBuffNotAvailable, rxStats.nRxPendBuffers);
+        } else {
+            SYS_CONSOLE_PRINT("%s: stats not available\n\r", ifNames[i]);
+        }
+    }
+    SYS_CONSOLE_PRINT("main loop: %lu cycles/s\n\r", (unsigned long)s_idle_cycles_per_sec);
+}
+
+// Timestamp command to show build info
+static void show_timestamp(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
+    (void)pCmdIO; (void)argc; (void)argv;
+    SYS_CONSOLE_PRINT("======================================\n\r");
+    SYS_CONSOLE_PRINT("tcpip_iperf_lan865x bridge - Build Info\n\r");
+    SYS_CONSOLE_PRINT("Build Timestamp: "__DATE__" "__TIME__"\n\r");
+    SYS_CONSOLE_PRINT("======================================\n\r");
+}
+
+/* Time since boot/last reset, human-readable - the fast way to tell "the
+ * board is still the same process that was running before" from "it silently
+ * rebooted (watchdog, assert loop, pyocd reset) and only looks the same". */
+static void cmd_uptime(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
+    uint64_t ticks = SYS_TIME_Counter64Get();
+    uint32_t freq = SYS_TIME_FrequencyGet();
+    uint64_t total_s = (freq != 0u) ? (ticks / freq) : 0u;
+    uint32_t days  = (uint32_t)(total_s / 86400ULL);
+    uint32_t hours = (uint32_t)((total_s % 86400ULL) / 3600ULL);
+    uint32_t mins  = (uint32_t)((total_s % 3600ULL) / 60ULL);
+    uint32_t secs  = (uint32_t)(total_s % 60ULL);
+    (void)pCmdIO; (void)argc; (void)argv;
+
+    SYS_CONSOLE_PRINT("uptime: %ud %02u:%02u:%02u  (%lu s since boot/last reset)\r\n",
+        (unsigned)days, (unsigned)hours, (unsigned)mins, (unsigned)secs,
+        (unsigned long)total_s);
+}
 
 /* Ported from the sister project (t1s_100baset_bridge/firmware/src/app.c) to
    read live config/state (structs, driver descriptors, register-backed
@@ -162,6 +407,49 @@ static void DumpMem(uint32_t addr, uint32_t count)
             /* wait for the SERCOM TX interrupt to drain the ring buffer */
         }
         SYS_CONSOLE_PRINT("%s", line);
+    }
+}
+
+static void cmd_logclear(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv) {
+    (void)pCmdIO; (void)argc; (void)argv;
+    pkt_log.read_idx     = pkt_log.write_idx; /* drain pending entries */
+    pkt_log.overflow_cnt = 0u;
+    pkt_log.total_logged = 0u;
+    frame_data_pool.write_offset = 0u;
+    SYS_CONSOLE_PRINT("[LOG] ring buffer cleared\r\n");
+}
+
+static void cmd_logstat(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv) {
+    (void)pCmdIO; (void)argc; (void)argv;
+    uint32_t wi      = pkt_log.write_idx;  /* snapshot volatile index */
+    uint32_t pending = (wi - pkt_log.read_idx) & (PKT_LOG_BUF_SIZE - 1u);
+    SYS_CONSOLE_PRINT("[LOG] total=%u pending=%u overflows=%u bufsize=%u\r\n",
+        (unsigned)pkt_log.total_logged, (unsigned)pending,
+        (unsigned)pkt_log.overflow_cnt, (unsigned)PKT_LOG_BUF_SIZE);
+    SYS_CONSOLE_PRINT("[LOG] pool_offset=%u pool_size=%u (%u frames x %u bytes)\r\n",
+        (unsigned)frame_data_pool.write_offset,
+        (unsigned)FRAME_DATA_POOL_SIZE,
+        (unsigned)PKT_LOG_MAX_FRAMES,
+        (unsigned)PKT_LOG_MAX_FRAME_SIZE);
+}
+
+static void my_dump(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
+    (void)pCmdIO;
+    if (argc < 2) {
+        SYS_CONSOLE_PRINT("Usage: ipdump <mode>  (0=off, 1=eth0, 2=eth1, 3=both)\n\r");
+        return;
+    }
+    ipdump_mode = strtoul(argv[1], NULL, 16);
+    if (ipdump_mode == 0) {
+        SYS_CONSOLE_PRINT("IP Layer Dump de-activated\n\r");
+    } else if (ipdump_mode == 1) {
+        SYS_CONSOLE_PRINT("IP Layer Dump activated on eth0\n\r");
+    } else if (ipdump_mode == 2) {
+        SYS_CONSOLE_PRINT("IP Layer Dump activated on eth1\n\r");
+    } else if (ipdump_mode == 3) {
+        SYS_CONSOLE_PRINT("IP Layer Dump activated on eth0 and eth1\n\r");
+    } else {
+        SYS_CONSOLE_PRINT("Parameter out of range\n\r");
     }
 }
 
@@ -252,10 +540,56 @@ static void cmd_mem_poke(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv)
     }
 }
 
+/* meminfo: free memory on BOTH heaps.
+ *  - C-runtime heap: XC32 uses nano-malloc (no mallinfo, and the whole heap is
+ *    sbrk'd up front with free blocks tracked internally), so we report the total
+ *    reserved size (_eheap-_heap) and PROBE the largest allocatable block with a
+ *    non-destructive malloc/free binary search - a real "largest free chunk".
+ *  - TCP/IP stack heap: the DRAM pool where packets/sockets/the MAC bridge
+ *    allocate (same figures as the built-in 'heapinfo'). */
+extern char _heap;            /* linker: C-runtime heap start (absolute symbol)  */
+extern char _eheap;           /* linker: C-runtime heap end (= _heap + heap size) */
+static size_t cheap_largest_free(size_t cap) {
+    size_t lo = 1u, hi = cap, best = 0u;
+    while (lo <= hi) {
+        size_t mid = lo + (hi - lo) / 2u;
+        void *p = malloc(mid);
+        if (p) { free(p); best = mid; lo = mid + 1u; }
+        else   { if (mid == 0u) break; hi = mid - 1u; }
+    }
+    return best;
+}
+static void cmd_meminfo(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
+    size_t total = (size_t)((uintptr_t)&_eheap - (uintptr_t)&_heap);  /* via uintptr_t: not UB pointer subtraction */
+    size_t largest = cheap_largest_free(total);
+    TCPIP_STACK_HEAP_HANDLE h;
+    (void)pCmdIO; (void)argc; (void)argv;
+
+    SYS_CONSOLE_PRINT("C-runtime heap: total=%u  largest free block=%u  (nano-malloc; no exact free count)\r\n",
+        (unsigned)total, (unsigned)largest);
+
+    h = TCPIP_STACK_HeapHandleGet(TCPIP_STACK_HEAP_TYPE_INTERNAL, 0);
+    if (h != 0) {
+        SYS_CONSOLE_PRINT("TCP/IP heap:    size=%u  free=%u  maxblock=%u  highwater=%u\r\n",
+            (unsigned)TCPIP_STACK_HEAP_Size(h), (unsigned)TCPIP_STACK_HEAP_FreeSize(h),
+            (unsigned)TCPIP_STACK_HEAP_MaxSize(h), (unsigned)TCPIP_STACK_HEAP_HighWatermark(h));
+    } else {
+        SYS_CONSOLE_PRINT("TCP/IP heap:    (no handle)\r\n");
+    }
+}
+
 static const SYS_CMD_DESCRIPTOR s_cmdTbl[] = {
+    {"help", (SYS_CMD_FNC) test_help, ": show Test group commands"},
+    {"timestamp", (SYS_CMD_FNC) show_timestamp, ": show build timestamp"},
+    {"uptime", (SYS_CMD_FNC) cmd_uptime, ": time since boot/last reset (d hh:mm:ss)"},
+    {"ipdump", (SYS_CMD_FNC) my_dump, ": dump rx ip packets (0:off 1:eth0 2:eth1 3:both)"},
+    {"stats", (SYS_CMD_FNC) cmd_stats, ": show TX/RX counters for eth0 and eth1"},
+    {"meminfo", (SYS_CMD_FNC) cmd_meminfo, ": free memory on the C-runtime heap and the TCP/IP heap"},
     {"dump", (SYS_CMD_FNC) cmd_mem_dump, ": dump memory (dump <addr_hex> <count>)"},
     {"peek", (SYS_CMD_FNC) cmd_mem_peek, ": read a single value (peek <addr_hex> [size=1|2|4])"},
     {"poke", (SYS_CMD_FNC) cmd_mem_poke, ": write a single value (poke <addr_hex> <value_hex> [size=1|2|4])"},
+    {"logclear",     (SYS_CMD_FNC) cmd_logclear,     ": clear deferred packet log buffer"},
+    {"logstat",      (SYS_CMD_FNC) cmd_logstat,      ": show deferred log statistics (total, pending, overflows)"},
 };
 
 static bool Command_Init(void)
@@ -289,11 +623,21 @@ void APP_Initialize ( void )
     TCPIP_TELNET_HANDLE telnetAuthHandle = TCPIP_TELNET_AuthenticationRegister(TelnetAuthenticationHandler, &TelnetHandlerParam);
     SYS_CONSOLE_PRINT("Telnet auth handler registration: %s\n\r", (telnetAuthHandle != NULL) ? "OK" : "FAILED (slot already taken)");
 
-    Command_Init();
+    timerHandle = SYS_TIME_TimerCreate(0, SYS_TIME_MSToCount(1000), &BRIDGE_TimerCallback, (uintptr_t) NULL, SYS_TIME_PERIODIC);
+    SYS_TIME_TimerStart(timerHandle);
 
-    /* TODO: Initialize your application's state machine and other
-     * parameters.
-     */
+    Command_Init();
+    LAN865X_DIAG_Initialize();
+    NOIP_Initialize();
+    TESTSERVER_Initialize();
+    /* MIRROR_Initialize() is deferred to APP_STATE_SERVICE_TASKS, NOT called here:
+     * unlike the other three (which only register CLI commands), it allocates its
+     * packet pool from the TCP/IP heap via TCPIP_PKT_PacketAlloc(). At this point
+     * APP_Initialize() is still running synchronously inside SYS_Initialize() -
+     * TCPIP_STACK_Init() has only started the stack's own (asynchronous)
+     * initialization, the heap is not necessarily up yet, and calling into it
+     * this early caused a hard fault (bus fault, invalid pointer deref inside
+     * TCPIP_HEAP_MallocInline) - see docs/session-log.md. */
 }
 
 
@@ -316,23 +660,86 @@ void APP_Tasks ( void )
         {
             bool appInitialized = true;
 
-
+            my_delay_time = 5;
             if (appInitialized)
             {
-
-                appData.state = APP_STATE_SERVICE_TASKS;
+                appData.state = APP_STATE_WAIT;
             }
             break;
         }
 
+        case APP_STATE_WAIT:
+            if (my_delay_time == 0) {
+                appData.state = APP_STATE_SERVICE_TASKS;
+            }
+            break;
+
         case APP_STATE_SERVICE_TASKS:
         {
-
+            TCPIP_NET_HANDLE eth0_net_hd = TCPIP_STACK_IndexToNet(0);
+            TCPIP_STACK_PacketHandlerRegister(eth0_net_hd, pktEth0Handler, MyEth0HandlerParam);
+            TCPIP_NET_HANDLE eth1_net_hd = TCPIP_STACK_IndexToNet(1);
+            TCPIP_STACK_PacketHandlerRegister(eth1_net_hd, pktEth1Handler, MyEth1HandlerParam);
+            env_apply();   /* push the persisted network config into the stack (once, stack is up) */
+            MIRROR_Initialize();  /* deferred from APP_Initialize() - see comment there; stack/heap are up here */
+            appData.state = APP_STATE_IDLE;
             break;
         }
 
-        /* TODO: implement your application state machine.*/
+        case APP_STATE_IDLE:
+        {
+            static uint64_t ticks_per_ms  = 0u;
+            if (ticks_per_ms == 0u) {
+                ticks_per_ms = (uint64_t)SYS_TIME_FrequencyGet() / 1000ULL;
+            }
 
+            s_idle_cycle_count++;
+
+            /* Register access / test modes / PLCA - see lan865x_diag.c */
+            LAN865X_DIAG_Tasks();
+
+            /* TCP echo test server - see testserver.c */
+            TESTSERVER_Tasks();
+
+            /* === Deferred packet log output (max 10 entries per APP_Tasks iteration) === */
+            if (ticks_per_ms > 0u) {
+                PKT_LOG_ENTRY log_e;
+                uint32_t max_print = 10u;
+                while (max_print-- > 0u && PktLog_Read(&log_e)) {
+                    uint64_t ts_ms = log_e.timestamp / ticks_per_ms;
+                    switch (log_e.log_type) {
+                        case PKT_LOG_NOIP:
+                            NOIP_PrintRxLine(log_e.pkt_counter, log_e.noip_seq,
+                                             log_e.mac_src, log_e.length, ts_ms);
+                            if (log_e.data_len > 0u) {
+                                DumpMem((uint32_t)&frame_data_pool.pool[log_e.data_offset], log_e.data_len);
+                            }
+                            break;
+                        case PKT_LOG_ETH0:
+                            SYS_CONSOLE_PRINT("E0:%u len=%u ts=%llu ms%s\r\n",
+                                (unsigned)log_e.pkt_counter, (unsigned)log_e.length,
+                                (unsigned long long)ts_ms,
+                                log_e.truncated ? " [TRUNC]" : "");
+                            if (log_e.data_len > 0u) {
+                                DumpMem((uint32_t)&frame_data_pool.pool[log_e.data_offset], log_e.data_len);
+                            }
+                            break;
+                        case PKT_LOG_ETH1:
+                            SYS_CONSOLE_PRINT("E1:%u len=%u ts=%llu ms%s\r\n",
+                                (unsigned)log_e.pkt_counter, (unsigned)log_e.length,
+                                (unsigned long long)ts_ms,
+                                log_e.truncated ? " [TRUNC]" : "");
+                            if (log_e.data_len > 0u) {
+                                DumpMem((uint32_t)&frame_data_pool.pool[log_e.data_offset], log_e.data_len);
+                            }
+                            break;
+                        default:
+                            break;
+                    }
+                }
+            }
+            break;
+        }
 
         /* The default state should never be executed. */
         default:
@@ -341,6 +748,72 @@ void APP_Tasks ( void )
             break;
         }
     }
+}
+
+bool pktEth0Handler(TCPIP_NET_HANDLE hNet, TCPIP_MAC_PACKET* rxPkt, uint16_t frameType, const void* hParam) {
+    static uint32_t packet_counter = 0;
+    (void)hNet; (void)hParam;
+
+    packet_counter++;
+
+    /* Port mirror (SPAN) for Wireshark - see port_mirror.c. Checks the enable
+     * flag and the own-MAC filter itself. */
+    MIRROR_Eth0Rx(rxPkt);
+
+    /* NoIP raw test frame: the module owns the EtherType, the frame layout and
+     * the counters. The deferred log ring buffer stays here because ipdump shares
+     * it, so the printing happens later in the drain loop (see PKT_LOG_NOIP). */
+    if (NOIP_IsNoIpFrame(frameType)) {
+        const uint8_t *p = rxPkt->pMacLayer;
+        PKT_LOG_ENTRY log_e = {0};
+        log_e.timestamp   = SYS_TIME_Counter64Get();
+        log_e.pkt_counter = NOIP_CountRx();
+        log_e.noip_seq    = NOIP_SeqFromFrame(p);
+        log_e.frame_type  = frameType;
+        log_e.length      = rxPkt->pDSeg->segLen;
+        log_e.iface       = 0u;
+        log_e.log_type    = PKT_LOG_NOIP;
+        memcpy(log_e.mac_src, &p[6], 6u);
+        PktLog_Write(&log_e, rxPkt->pMacLayer, rxPkt->pDSeg->segLen);
+        TCPIP_PKT_PacketAcknowledge(rxPkt, TCPIP_MAC_PKT_ACK_RX_OK);
+        return true;
+    }
+
+    if (ipdump_mode == 1 || ipdump_mode == 3) {
+        PKT_LOG_ENTRY log_e = {0};
+        log_e.timestamp   = SYS_TIME_Counter64Get();
+        log_e.pkt_counter = packet_counter;
+        log_e.frame_type  = frameType;
+        log_e.length      = rxPkt->pDSeg->segLen;
+        log_e.iface       = 0u;
+        log_e.log_type    = PKT_LOG_ETH0;
+        memcpy(log_e.mac_src, &rxPkt->pMacLayer[6], 6u);
+        PktLog_Write(&log_e, rxPkt->pMacLayer, rxPkt->pDSeg->segLen);
+    }
+
+    /* eth0<->eth1 L2 bridging is done by the Harmony MAC bridge, not here.
+     * Return false so the frame goes to normal stack/bridge processing. */
+    return false;
+}
+
+bool pktEth1Handler(TCPIP_NET_HANDLE hNet, TCPIP_MAC_PACKET* rxPkt, uint16_t frameType, const void* hParam) {
+    static uint32_t packet_counter = 0;
+    (void)hNet; (void)hParam;
+
+    packet_counter++;
+
+    if (ipdump_mode == 2 || ipdump_mode == 3) {
+        PKT_LOG_ENTRY log_e = {0};
+        log_e.timestamp   = SYS_TIME_Counter64Get();
+        log_e.pkt_counter = packet_counter;
+        log_e.frame_type  = frameType;
+        log_e.length      = rxPkt->pDSeg->segLen;
+        log_e.iface       = 1u;
+        log_e.log_type    = PKT_LOG_ETH1;
+        memcpy(log_e.mac_src, &rxPkt->pDSeg->segLoad[6], 6u);
+        PktLog_Write(&log_e, rxPkt->pDSeg->segLoad, rxPkt->pDSeg->segLen);
+    }
+    return false;
 }
 
 

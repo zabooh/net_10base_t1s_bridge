@@ -825,6 +825,239 @@ completed step — do not wait until the end of the session.
   on purpose so the next session doesn't have to re-add them) and should be
   removed once Telnet login is confirmed working.
 
+## 2026-08-31
+
+### Five sister-project modules ported; board stopped booting entirely
+
+- Ported `env.c/h`, `lan865x_diag.c/h`, `port_mirror.c/h`, `noip_test.c/h`,
+  `testserver.c/h` from `t1s_100baset_bridge` into `firmware\src\` (plain
+  user files, no MCC component needed - see the readiness check above), and
+  wired their `_Initialize()`/`_Tasks()` calls into `app.c`. Fixed a batch of
+  package-version API drift along the way (newer `net`/`tcpip` package here
+  vs. the sister's older one): `TCPIP_MAC_PACKET` typedef instead of
+  `struct _tag_TCPIP_MAC_PACKET`; `TCPIP_Helper_ProtSglList*` instead of
+  `TCPIP_Helper_ProtectedSingleList*`; `TCPIP_STACK_NetDnsPrimarySet` instead
+  of `..._NetAddressDnsPrimarySet`; `TCPIP_STACK_HEAP_TYPE_INTERNAL` instead
+  of `..._INTERNAL_HEAP`. Two sister-project driver hand-patches
+  (`DRV_LAN865X_SetPlcaNodeId()`, `DRV_LAN865X_SendRawEthFrame()`) don't
+  exist in this project's driver at all - the PLCA-node-ID gap was documented
+  as out of scope, the raw-frame send was reimplemented in `noip_test.c`
+  using `TCPIP_PKT_PacketAlloc()` + `DRV_LAN865X_PacketTx()` directly.
+  `nbproject\configurations.xml` and (since a GUI build wasn't run)
+  `nbproject\Makefile-default.mk` were hand-patched to register the 5 new
+  `.c` files as project sources - the itemPath entries are picked up by MCC
+  normally; the Makefile entries need re-adding only if MPLAB X's own
+  "Clean and Build" ever regenerates that file from scratch without them.
+- `BUILD SUCCESSFUL`, but the board then produced **zero console output** on
+  any reset - a regression from the previously-working bridge milestone.
+
+### Boot-hang bisection - two false leads before the real causes
+
+- Confirmed via `git worktree add ../net_10base_t1s_lastgood e569c7e` (a
+  clean checkout of the last known-good commit, built/flashed
+  independently) that the hang was software-caused, not a hardware fault:
+  the worktree build booted cleanly on the same physical board.
+- Established a reliable diagnostic recipe - far more trustworthy than
+  watching the serial console, which can look silent for reasons unrelated
+  to the firmware (see the tooling pitfall below):
+  ```
+  pyocd commander -t atsame54p20a -u <probe-id> -M pre-reset --elf <production.elf> -c "reg" -c "exit"
+  xc32-addr2line.exe -e <production.elf> -f -C <pc-hex> <lr-hex>
+  ```
+  `-M pre-reset` resets and halts immediately; comparing PC across repeated
+  invocations (identical address every time = genuinely stuck; changing
+  address = running normally) distinguishes a real hang from a false alarm.
+- **First false lead:** reverting `app.c` alone (keeping the 5 modules
+  linked but uncalled) restored clean boot, so suspicion fell on `app.c`'s
+  two large static buffers (`pkt_log`, `frame_data_pool`, ~27KB total)
+  possibly landing in `.data` instead of `.bss` because of their explicit
+  `= {0}` initializers - a real XC32/MPLAB pitfall in general, but *not*
+  what was happening here (confirmed via the linker map: both were already
+  in `.bss`). Dropping the initializers anyway (harmless, and correct
+  practice regardless) did **not** fix the hang.
+- **Second false lead, ruled out empirically:** total linked code size.
+  Bisected by re-adding pieces of the port to a reverted `app.c` one at a
+  time, flashing and pyOCD-checking each combination:
+  - `LAN865X_DIAG_Initialize()` alone → boots fine.
+  - `MIRROR_Initialize()` alone (no `LAN865X_DIAG`) → hangs, identically.
+  - A synthetic ~1.7KB dead-weight const array + trivial functions (no
+    `port_mirror.c` involved at all, and *bigger* than `port_mirror.o`'s
+    actual ~1.65KB footprint) → boots fine.
+  This proved it was not "total flash image size crossed some threshold" -
+  something specific to `port_mirror.c`'s content was responsible.
+- Narrowed further by replicating `port_mirror.c`'s `mirror_pool_init()`
+  logic inline in `app.c` (no `port_mirror.c` linked at all): 8x
+  `TCPIP_PKT_PacketAlloc(sizeof(TCPIP_MAC_PACKET), 1518,
+  TCPIP_MAC_PKT_FLAG_STATIC)` + `TCPIP_Helper_ProtSglList*` calls →
+  **hangs**. The list-only calls alone (no `TCPIP_PKT_PacketAlloc()`) →
+  boots fine. This isolated the trigger to calling `TCPIP_PKT_PacketAlloc()`
+  from `app.c`, but - misleadingly, as it turned out - every one of these
+  bisection builds still showed the CPU stuck inside unmodified,
+  MCC-generated `FDPLL0_Initialize()` (`plib_clock.c:71`,
+  `SYS_Initialize()` → `CLOCK_Initialize()`), a pure hardware
+  `OSCCTRL_DPLLSYNCBUSY` register poll with no logical connection to
+  anything in `app.c` - the actual reason different `app.c` content flipped
+  the outcome stayed unexplained by pure source-code reasoning at this
+  point (see "Root cause 1" below for why).
+
+### Tooling pitfall found and fixed along the way: `cli.py` false "hang" reports
+
+- Twice, `cli.py --read N "reset"` looked like a hang (`timeout 15 ...
+  --read 20 "reset"` exiting with code 124) and was briefly misreported as
+  "board hangs" - actually caused by wrapping the call in a **shorter**
+  outer `timeout` than the script's own `--read` window, which kills it
+  deterministically regardless of the board's state. Root-caused, fixed,
+  and documented: `apps\tcpip_iperf_lan865x\CLAUDE.md` section 2 (the
+  `cli.py`/pyOCD-recipe rule) and `~\.claude\knowledge\windows-shell-fallstricke.md`
+  (general "outer timeout vs. a script's own wait window" lesson).
+
+### Root cause 1 (hardware/silicon): confirmed Microchip Silicon Errata DS80000748K, item 2.13.2
+
+- Consulted the official **SAM D5x/E5x Family Silicon Errata and Data Sheet
+  Clarification** (`DS80000748K`), section 2.13.2 "FDPLL Ratio in
+  DPLLnRATIO": *"When changing the FDPLL ratio in DPLLnRATIO register
+  on-the-fly, STATUS.DPLLnLDRTO will not be set when the ratio update will
+  be completed."* Affects **both** Rev A and Rev D silicon (this board is
+  covered either way).
+- Confirmed by direct register inspection after a boot that had been
+  patched to no longer wait forever (see fix below): `OSCCTRL_DPLLRATIO`
+  (`0x40001034`) correctly reads back `0x77` (119, the value written) and
+  `OSCCTRL_DPLLSTATUS` (`0x40001040`) correctly reads `0x3`
+  (`LOCK_Msk | CLKRDY_Msk`, i.e. genuinely locked) - **but**
+  `OSCCTRL_DPLLSYNCBUSY` (`0x4000103C`) still reads bit2
+  (`DPLLRATIO_Msk`) set, indefinitely, long after the DPLL is provably
+  locked and running correctly. The status/sync feedback for this specific
+  register is simply not trustworthy on this silicon, exactly as the
+  errata describes - the DPLL itself works fine.
+- **Fix applied** (hand-patch to MCC-generated `plib_clock.c`, documented
+  exception per `CLAUDE.md` section 3 - no MCC GUI field exists for this):
+  added a bounded iteration count (`CLOCK_DPLL0_SYNC_TIMEOUT`, initially
+  tried at `100000` - found to take 15-20+ seconds wall-clock because each
+  poll of a cross-clock-domain synchronized status register is expensive,
+  not because of loop-body cost; reduced to `2000`, confirmed sufficient)
+  to all three `FDPLL0_Initialize()` wait loops (`DPLLSYNCBUSY.DPLLRATIO`,
+  `DPLLSYNCBUSY.ENABLE`, `DPLLSTATUS.LOCK|CLKRDY`), breaking out instead of
+  spinning forever. Re-apply this function after any regenerate that
+  touches `plib_clock.c`.
+- **Caution for future debugging in this file:** a naive `-M attach` +
+  `halt` pyOCD snapshot showed the CPU sitting in C-runtime startup
+  (`__dinit_clear`/`__pic32c_data_initialization`) on **both** a hung build
+  and the known-good baseline alike - a sampling artifact of that specific
+  attach mode, not a real program-counter location. Register-level ground
+  truth (reading `OSCCTRL_DPLLSTATUS`/`DPLLRATIO`/`DPLLSYNCBUSY` directly,
+  or the `-M pre-reset` + repeated-PC-comparison recipe above) is what
+  actually resolved this - don't trust a single `-M attach` snapshot's PC
+  in isolation.
+
+### Root cause 2 (application bug): `MIRROR_Initialize()` touched the TCP/IP heap before it was ready
+
+- With root cause 1 fixed, the board's clock came up correctly but the
+  serial console still produced **no output and no response to any
+  command**. A `-M pre-reset` register dump this time showed a genuine,
+  reproducible hang (identical PC across repeated halts) inside
+  **`HardFault_Handler`** (`exceptions.c:80`), not the clock code.
+- Read the fault status registers directly:
+  `CFSR` (`0xE000ED28`) = `0x00008200` → `BFSR.PRECISERR` +
+  `BFSR.BFARVALID` set (a precise bus fault, faulting address valid);
+  `BFAR` (`0xE000ED38`) = `0x0100a8c4` - **not a valid address** in this
+  device's flash (`0x00000000`-`0x000FFFFF`) or RAM (`0x20000000`+) map at
+  all, i.e. a genuine wild-pointer dereference. Decoded the
+  hardware-auto-stacked exception frame from the stack pointer at fault
+  time to recover the actual faulting `PC`/`LR` (offsets `+0x18`/`+0x1C`
+  from the frame base: `r0,r1,r2,r3,r12,LR,PC,xPSR`), then resolved them:
+  ```
+  TCPIP_HEAP_MallocInline   library/tcpip/src/tcpip_heap_alloc.h:197
+  mirror_pool_init          port_mirror.c:173  (a TCPIP_PKT_PacketAlloc() call)
+  ```
+- Root cause: `MIRROR_Initialize()` (specifically its `mirror_pool_init()`,
+  which pre-allocates 8 static `TCPIP_MAC_PACKET`s via
+  `TCPIP_PKT_PacketAlloc()`) was called directly from `APP_Initialize()`.
+  `APP_Initialize()` runs *synchronously*, still inside `SYS_Initialize()`
+  (`initialization.c:862`, right after `TCPIP_STACK_Init()` at line 855) -
+  but `TCPIP_STACK_Init()` only *starts* the TCP/IP stack's own
+  asynchronous initialization (visible later as "TCP/IP Stack:
+  Initialization Started/Ended" printed from a callback that fires over
+  several subsequent main-loop iterations); the heap is not necessarily
+  set up yet at the point `APP_Initialize()` runs. The sister project's own
+  comment in `port_mirror.c` ("called from `MIRROR_Initialize()`, well
+  after `TCPIP_STACK_Init()` has set the heap up") turned out to be an
+  assumption that does not hold for this project's exact init ordering.
+  The other three ported modules' `_Initialize()` functions only call
+  `SYS_CMD_ADDGRP()` (CLI command registration, no heap access) - which is
+  exactly why only `MIRROR_Initialize()` ever crashed.
+- **Fix applied** (in `app.c`, a genuine user file - no MCC exception
+  needed): moved the `MIRROR_Initialize()` call out of `APP_Initialize()`
+  and into the existing `APP_STATE_SERVICE_TASKS` state in `APP_Tasks()`,
+  right alongside the packet-handler registration and `env_apply()` call -
+  the same place this app.c already deferred every other "the stack must
+  be up" operation to, via the pre-existing `APP_STATE_INIT` →
+  `APP_STATE_WAIT` (5-tick delay) → `APP_STATE_SERVICE_TASKS` sequence.
+
+### RESOLVED - full boot confirmed working end-to-end with all 5 ported modules
+
+- Rebuilt, flashed, and tested over the serial CLI
+  (`cli.py --port COM8 --read 10 "reset"`): clean boot text
+  (`TCP/IP Stack: Initialization Started/Ended - success`, LAN865x reset
+  complete, PLCA node ID applied), followed by `help` (all 7 command groups
+  present: `span`, `iperf`, `tcpip`, `testserver`, `noip`, `lan`, `Test`,
+  `env`), `mirror` (prints its debug counters, no crash), `stats` (shows
+  real eth0/eth1 TX/RX traffic - the bridge is actively forwarding), and
+  `showenv` (persisted config intact: IPs, MACs, PLCA node/count).
+- Both root causes were independent and additive: the DPLL errata hang
+  masked the heap-timing bug entirely (execution never got far enough to
+  reach `mirror_pool_init()` before this session's fix), which is why the
+  earlier `app.c`-content bisection looked erratic/size-dependent rather
+  than pointing cleanly at one function - different builds hit the
+  timing-marginal DPLL sync-status quirk differently before either bug
+  could even be observed directly.
+- **Not yet done:** confirming MCC can still cleanly regenerate this
+  project (`Generate Code` in MPLAB X) with all three hand patches
+  (`plib_clock.c`, `drv_lan865x_api.c`, `initialization.c`) surviving or
+  being straightforward to re-apply - needs the MPLAB X GUI, left for the
+  user.
+
+### Full per-module CLI verification matrix - all green
+
+- `lanhelp`/`lan_read 0x0004CA02`/`testmode`/`plca_node`/`plca_stat`/`sqi`
+  (all no-arg/status forms): all responded correctly - `lan_read` on the
+  PLCA_CTRL1 register read back `0x805` (NODE_CNT=8<<8 | NODE_ID=5,
+  matching `plca_node`'s own report), `plca_stat` showed real bus activity
+  (12 transmit opportunities, 15 BEACONs, link in range), `testmode`
+  confirmed test mode 0 (normal operation).
+- `noip_stat` (TX=0/RX=0) → `noip_send 3` (3 frames sent, seq 1-3) →
+  `noip_stat` again (TX=3, confirmed).
+- `testserver` (idle) → `testserver start` (listening on port 5566) →
+  `testserver stop` (stopped, rx=0 tx=0 bytes - no client connected during
+  this quick check, but the start/stop lifecycle itself is clean).
+- `mirror 1`/`mirror 0`: turns on/off cleanly, `rx_hook` debug counter
+  increments while on (6 frames seen). `sniffer 1`/`sniffer 0`: turns the
+  LAN8651 transmitter off/back on via a verified register RMW
+  (`LAN865X RMW OK ... [VERIFY] PASS`, addr `0x000308F9` bit 0x4000, the
+  T1SPMACTL.TXD bit), `tx_submitted=6`/`ack_ok=6`/`max_len_ok=88` proved
+  real frames were mirrored and actually transmitted successfully -
+  finished with sniffer back OFF (T1S TX re-enabled), no leftover state.
+- **Persistence across a real reboot, not just RAM:** `setenv mirror 1` →
+  `saveenv` → `reset` (full board reboot) → `showenv` correctly reported
+  `mirror ON at boot` - EEPROM persistence survives an actual power-on/
+  reset cycle, not just the current session. Restored to `mirror 0` +
+  `saveenv` afterward (the bench default), then `readenv` (reload from
+  EEPROM without a reboot) confirmed the same state - both persistence
+  paths work. **`resetenv` deliberately not exercised** - it would reset
+  IPs/MACs/PLCA node config to compiled defaults and persist that, which
+  would disrupt the physical multi-node test setup currently in use; left
+  for a moment when that disruption is acceptable.
+- **Bridge regression via `bridge status`/`bridge stats`/`bridge fdb
+  show`** (stronger evidence than a one-off ping: shows continuous live
+  traffic, not a single round-trip): status `2` (running), stats clean
+  (`failPktAlloc/failDcptAlloc/failLocks/fdbFull` all `0`,
+  `pktPoolEmpty`/`dcptPoolEmpty` both `0`), both ports actively forwarding
+  (port 0: 114 received/103 fwd mcast; port 1: 107 received/114 fwd
+  mcast). FDB showed 17 learned entries including real external MAC
+  addresses on both ports with `fwdPackets` in the thousands (1566, 1518)
+  - the bridge has been forwarding real traffic continuously and
+  correctly throughout this session's testing, not just passing an
+  isolated check.
+
 ---
 
 <!-- Append new dated entries above this line as work continues. -->
