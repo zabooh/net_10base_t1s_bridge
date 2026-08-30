@@ -112,6 +112,7 @@ DRV_LAN865X_Configuration drvLan865xInitData[] = {
     .promiscuous =          DRV_LAN865X_PROMISCUOUS_IDX0,
     .txCutThrough =         DRV_LAN865X_TX_CUT_THROUGH_IDX0,
     .rxCutThrough =         DRV_LAN865X_RX_CUT_THROUGH_IDX0,
+    .suppressTx =           false,
 },
 };
 
@@ -819,15 +820,17 @@ void SYS_Initialize ( void* data )
      * the bus with the wrong identity. env_apply() (called later, from app.c) still
      * matters for a live 'setenv plca_id/plca_cnt' + 'saveenv' change while running.
      *
-     * NOTE: unlike the sister project (t1s_100baset_bridge), this project's
-     * DRV_LAN865X_Configuration has no `suppressTx` field - that field is itself a
-     * hand-patch to drv_lan865x.h/drv_lan865x_api.c there, not something MCC generates.
-     * Porting it would mean extending a generated struct's type, not just its values -
-     * out of scope for this port. The 'sniffer' console command (port_mirror.c) still
-     * provides live TXD suppression at runtime; only *persisting sniffer=1 so it is
-     * suppressed from the very first init step* is not available here. */
+     * Same reasoning for suppressTx (ported 2026-08-31 from the sister project,
+     * t1s_100baset_bridge - drv_lan865x.h/drv_lan865x_api.c there, and now here too):
+     * a board persisted as a permanent sniffer ('setenv sniffer 1' + 'saveenv') must
+     * never put a signal on the bus, not even for the fraction of a second between
+     * NETWORK_CONTROL/TXEN and a later app-level fix-up - see drv_lan865x_api.c's
+     * _InitUserSettings() for where this is read. Confirmed missing before this port:
+     * `showenv` reported "sniffer ON at boot" while T1SPMACTL (0x000308F9) still read
+     * back 0x0 until a live 'sniffer 1' was issued - see docs/session-log.md. */
     drvLan865xInitData[0].nodeId    = env_plca_id();
     drvLan865xInitData[0].nodeCount = env_plca_cnt();
+    drvLan865xInitData[0].suppressTx = env_sniffer();
 
     /* MISRA C-2012 Rule 11.3, 11.8 deviated below. Deviation record ID -
     H3_MISRAC_2012_R_11_3_DR_1 & H3_MISRAC_2012_R_11_8_DR_1*/

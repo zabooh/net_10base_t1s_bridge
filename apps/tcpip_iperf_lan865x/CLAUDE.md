@@ -258,6 +258,21 @@ cli.bat --port COM8 --read 3 "reset"
   `poke <addr> 1/0` schaltbar, gated `SYS_CONSOLE_PRINT` in `process_rx()`/
   `TC6_CB_OnRxEthernetPacket()`) ist noch im Code, aktuell deaktiviert — vor einem Release-Build
   entfernen oder bei Fortsetzung der Untersuchung wieder verwenden.
+- **`suppressTx` aus dem Schwesterprojekt portiert (2026-08-31):** `setenv sniffer 1` +
+  `saveenv` sorgte vorher nur für das RAM-Flag „sniffer ON at boot", ohne den T1S-Sender
+  wirklich stummzuschalten — bestätigt per `lan_read 0x000308F9` (`T1SPMACTL`), das direkt
+  nach dem Boot noch `0x0` zeigte statt `0x4000` (TXD). Grund: das Schwesterprojekt hat dafür
+  ein eigenes `suppressTx`-Feld in `DRV_LAN865X_Configuration`, das MCC hier nicht generiert.
+  **Fix (dokumentierte Ausnahme, drei Hand-Patches):** `bool suppressTx;` in `drv_lan865x.h`
+  ergänzt (gleiche Position wie im Schwesterprojekt, nach `rxCutThrough`); in
+  `drv_lan865x_api.c`s `_InitUserSettings()`-Zustandsautomat einen neuen `case 9` eingefügt,
+  der `T1SPMACTL=0x4000` schreibt, wenn `drvCfg.suppressTx` gesetzt ist — **vor** dem
+  abschließenden `NETWORK_CONTROL`/TXEN-Write (der dafür von `case 9` auf `case 10`
+  hochgezählt wurde); in `initialization.c` `.suppressTx = false,` im Default-Initialisierer
+  und `drvLan865xInitData[0].suppressTx = env_sniffer();` direkt neben der bestehenden
+  `nodeId`/`nodeCount`-Übernahme ergänzt. **Verifiziert:** `lan_read 0x000308F9` zeigt jetzt
+  sofort nach dem Boot `0x00004000`, noch bevor irgendein `sniffer`-Kommando lief. Board nach
+  dem Test wieder auf `sniffer OFF` zurückgesetzt (register-bestätigt).
 
 ---
 

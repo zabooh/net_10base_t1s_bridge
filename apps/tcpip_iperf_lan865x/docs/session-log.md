@@ -1406,6 +1406,66 @@ completed step — do not wait until the end of the session.
   remains in place but disabled - should be stripped out before any
   release build, or re-armed if this is picked back up.
 
+### Confirmed gap: `sniffer=1` persisted in env does not suppress T1S TX at boot
+
+- User asked whether the firmware starts up fully in sniffer mode with
+  the transmitter off when `sniffer` is persisted on. Verified directly:
+  `setenv sniffer 1` + `saveenv` + `reset`, then - **before** issuing any
+  `sniffer` command - `showenv` correctly reports `sniffer ON at boot
+  (now: ON)`, but `lan_read 0x000308F9` (T1SPMACTL) reads back
+  `0x00000000` - bit `0x4000` (TXD) is **not** set, i.e. the T1S
+  transmitter is still actively enabled despite the firmware believing
+  (and reporting) sniffer mode is on.
+- This matches a gap already flagged in the `initialization.c` hand-patch
+  comment during the original port: the sister project suppresses TX from
+  the very first driver-init step via a `drvCfg.suppressTx` field that
+  does not exist in this project's `DRV_LAN865X_Configuration` struct (a
+  hand-patch to the struct's own type there, not just its values - out of
+  scope for this port). `MIRROR_Initialize()` here only sets the RAM flag
+  `s_sniffer_on` and deliberately does not call `SNIFFER_Set()` (ported
+  comment assumes the driver-level suppression already happened, which is
+  true on the sister project but not here).
+- **Practical consequence:** a board configured with `setenv sniffer 1` +
+  `saveenv` is NOT a passive/invisible tap immediately after boot - it
+  keeps transmitting on the T1S bus (ARP/whatever else runs at startup)
+  until `sniffer 1` is issued live over the CLI, at which point the real
+  register write happens. For a true "silent from power-on" sniffer node,
+  this would need either porting the `suppressTx` struct extension, or
+  moving a live `SNIFFER_Set(true)` call earlier in the boot sequence
+  (before `TCPIP_STACK_Init()`/driver init, likely not straightforward
+  given `LAN865X_DIAG_Rmw()` needs `SYS_STATUS_READY`).
+- Reverted the board to the clean default afterward: `setenv sniffer 0` +
+  `saveenv` + live `sniffer 0` (both the persisted and the live RAM/
+  hardware state now consistently OFF, register-verified).
+- **Fixed** (user asked to implement it the same way as the sister
+  project). Ported the `suppressTx` mechanism verbatim:
+  - `drv_lan865x.h`: added `bool suppressTx;` to `DRV_LAN865X_Configuration`
+    (same position as the sister project, right after `rxCutThrough`).
+  - `drv_lan865x_api.c`'s `_InitUserSettings()` init state machine: inserted
+    a new `case 9` that writes `T1SPMACTL` (`0x000308F9`) = `0x00004000`
+    (TXD) when `drvCfg.suppressTx` is true, *before* the final "Enable
+    Data Traffic" `NETWORK_CONTROL`/TXEN write (renumbered from `case 9`
+    to `case 10`) - T1SPMACTL is untouched by every earlier step, reset
+    default `0x0000`, so a plain write is safe.
+  - `initialization.c`: added `.suppressTx = false,` to
+    `drvLan865xInitData[]`'s default initializer, and
+    `drvLan865xInitData[0].suppressTx = env_sniffer();` right alongside
+    the existing `nodeId`/`nodeCount` env overrides (same hand-patch
+    block, before `TCPIP_STACK_Init()`). Updated the block's comment
+    (previously documented this as an intentional gap - now removed,
+    replaced with the sister project's own rationale plus a pointer to
+    the confirmed-bug entry above for context).
+  - All three are hand-patches to MCC-generated files - documented
+    exception, `CLAUDE.md` section 3 already updated.
+- **Verified with the exact same test as the confirmed-bug entry above:**
+  `setenv sniffer 1` + `saveenv` + `reset`, then - before any `sniffer`
+  command - `lan_read 0x000308F9` now reads back `0x00004000` (TXD set)
+  immediately after boot. Reverted to the clean default afterward
+  (`setenv sniffer 0` + `saveenv` + live `sniffer 0`), register-confirmed
+  back to `0x0`, `showenv` back to `sniffer OFF at boot (now: OFF)`.
+  Also confirmed a normal boot with `sniffer` persisted OFF still works
+  exactly as before (no regression) - `showenv`/`stats` both clean.
+
 ---
 
 <!-- Append new dated entries above this line as work continues. -->
