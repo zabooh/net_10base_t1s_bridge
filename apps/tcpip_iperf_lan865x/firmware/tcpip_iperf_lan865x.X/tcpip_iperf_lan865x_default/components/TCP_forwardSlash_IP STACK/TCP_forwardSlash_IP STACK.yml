@@ -42,8 +42,8 @@ data:
     children:
     - children:
       - attributes:
-          id: drvExtMacEnc28j60_0:ENC28J60_SPI
-          namespace: DATA LINK LAYER
+          id: net_Pres:Net_Pres_Crypto_Dependency
+          namespace: PRESENTATION LAYER
         type: Attachment
       - attributes:
           id: tcpipStack:Core_SysConsole_Dependency

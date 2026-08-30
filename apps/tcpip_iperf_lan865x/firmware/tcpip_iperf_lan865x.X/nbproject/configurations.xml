@@ -10,6 +10,28 @@
             <itemPath>../src/config/default/crypto/crypto.h</itemPath>
           </logicalFolder>
           <logicalFolder name="driver" displayName="driver" projectFiles="true">
+            <logicalFolder name="ethphy" displayName="ethphy" projectFiles="true">
+              <logicalFolder name="src" displayName="src" projectFiles="true">
+                <logicalFolder name="dynamic" displayName="dynamic" projectFiles="true">
+                  <itemPath>../src/config/default/driver/ethphy/src/dynamic/drv_extphy_regs.h</itemPath>
+                  <itemPath>../src/config/default/driver/ethphy/src/dynamic/drv_extphy_lan8742a_priv.h</itemPath>
+                </logicalFolder>
+                <itemPath>../src/config/default/driver/ethphy/src/drv_ethphy_local.h</itemPath>
+              </logicalFolder>
+              <itemPath>../src/config/default/driver/ethphy/drv_ethphy.h</itemPath>
+              <itemPath>../src/config/default/driver/ethphy/drv_extphy_lan8742a.h</itemPath>
+            </logicalFolder>
+            <logicalFolder name="gmac" displayName="gmac" projectFiles="true">
+              <logicalFolder name="src" displayName="src" projectFiles="true">
+                <logicalFolder name="dynamic" displayName="dynamic" projectFiles="true">
+                  <itemPath>../src/config/default/driver/gmac/src/dynamic/_gmac_dcpt_lists.h</itemPath>
+                  <itemPath>../src/config/default/driver/gmac/src/dynamic/drv_gmac_lib_sam.h</itemPath>
+                  <itemPath>../src/config/default/driver/gmac/src/dynamic/drv_gmac_lib.h</itemPath>
+                </logicalFolder>
+                <itemPath>../src/config/default/driver/gmac/src/drv_gmac_local.h</itemPath>
+              </logicalFolder>
+              <itemPath>../src/config/default/driver/gmac/drv_gmac.h</itemPath>
+            </logicalFolder>
             <logicalFolder name="lan865x" displayName="lan865x" projectFiles="true">
               <logicalFolder name="src" displayName="src" projectFiles="true">
                 <logicalFolder name="dynamic" displayName="dynamic" projectFiles="true">
@@ -23,6 +45,15 @@
               </logicalFolder>
               <itemPath>../src/config/default/driver/lan865x/drv_lan865x.h</itemPath>
             </logicalFolder>
+            <logicalFolder name="miim" displayName="miim" projectFiles="true">
+              <logicalFolder name="src" displayName="src" projectFiles="true">
+                <logicalFolder name="dynamic" displayName="dynamic" projectFiles="true">
+                  <itemPath>../src/config/default/driver/miim/src/dynamic/drv_miim_device.h</itemPath>
+                </logicalFolder>
+                <itemPath>../src/config/default/driver/miim/src/drv_miim_local.h</itemPath>
+              </logicalFolder>
+              <itemPath>../src/config/default/driver/miim/drv_miim.h</itemPath>
+            </logicalFolder>
             <logicalFolder name="spi" displayName="spi" projectFiles="true">
               <itemPath>../src/config/default/driver/spi/src/drv_spi_local.h</itemPath>
               <itemPath>../src/config/default/driver/spi/drv_spi.h</itemPath>
@@ -32,6 +63,13 @@
             <itemPath>../src/config/default/driver/driver_common.h</itemPath>
           </logicalFolder>
           <logicalFolder name="library" displayName="library" projectFiles="true">
+            <logicalFolder name="emulated_eeprom"
+                           displayName="emulated_eeprom"
+                           projectFiles="true">
+              <itemPath>../src/config/default/library/emulated_eeprom/emulated_eeprom.h</itemPath>
+              <itemPath>../src/config/default/library/emulated_eeprom/emulated_eeprom_local.h</itemPath>
+              <itemPath>../src/config/default/library/emulated_eeprom/emulated_eeprom_definitions.h</itemPath>
+            </logicalFolder>
             <logicalFolder name="tcpip" displayName="tcpip" projectFiles="true">
               <logicalFolder name="src" displayName="src" projectFiles="true">
                 <logicalFolder name="common" displayName="common" projectFiles="true">
@@ -157,9 +195,16 @@
           </logicalFolder>
           <logicalFolder name="net_pres" displayName="net_pres" projectFiles="true">
             <logicalFolder name="pres" displayName="pres" projectFiles="true">
+              <logicalFolder name="src" displayName="src" projectFiles="true">
+                <itemPath>../src/config/default/net_pres/pres/src/net_pres_local.h</itemPath>
+              </logicalFolder>
               <itemPath>../src/config/default/net_pres/pres/net_pres.h</itemPath>
               <itemPath>../src/config/default/net_pres/pres/net_pres_socketapi.h</itemPath>
               <itemPath>../src/config/default/net_pres/pres/net_pres_socketapiconversion.h</itemPath>
+              <itemPath>../src/config/default/net_pres/pres/net_pres_certstore.h</itemPath>
+              <itemPath>../src/config/default/net_pres/pres/net_pres_encryptionproviderapi.h</itemPath>
+              <itemPath>../src/config/default/net_pres/pres/net_pres_transportapi.h</itemPath>
+              <itemPath>../src/config/default/net_pres/pres/net_pres_enc_glue.h</itemPath>
             </logicalFolder>
           </logicalFolder>
           <logicalFolder name="osal" displayName="osal" projectFiles="true">
@@ -555,6 +600,7 @@
                              projectFiles="true">
                 <logicalFolder name="components" displayName="components" projectFiles="true">
                   <itemPath>tcpip_iperf_lan865x_default/components/TCP_forwardSlash_IP STACK/components/APPLICATION LAYER/components/tcpipIperf.yml</itemPath>
+                  <itemPath>tcpip_iperf_lan865x_default/components/TCP_forwardSlash_IP STACK/components/APPLICATION LAYER/components/tcpipTelnet.yml</itemPath>
                   <itemPath>tcpip_iperf_lan865x_default/components/TCP_forwardSlash_IP STACK/components/APPLICATION LAYER/components/tcpipDns.yml</itemPath>
                 </logicalFolder>
                 <itemPath>tcpip_iperf_lan865x_default/components/TCP_forwardSlash_IP STACK/components/APPLICATION LAYER/APPLICATION LAYER.yml</itemPath>
@@ -574,8 +620,11 @@
                 <logicalFolder name="components" displayName="components" projectFiles="true">
                   <itemPath>tcpip_iperf_lan865x_default/components/TCP_forwardSlash_IP STACK/components/DATA LINK LAYER/components/tcpipNetConfig.yml</itemPath>
                   <itemPath>tcpip_iperf_lan865x_default/components/TCP_forwardSlash_IP STACK/components/DATA LINK LAYER/components/drv_spi.yml</itemPath>
+                  <itemPath>tcpip_iperf_lan865x_default/components/TCP_forwardSlash_IP STACK/components/DATA LINK LAYER/components/drvGmac.yml</itemPath>
+                  <itemPath>tcpip_iperf_lan865x_default/components/TCP_forwardSlash_IP STACK/components/DATA LINK LAYER/components/drvExtPhyLan8742a.yml</itemPath>
                   <itemPath>tcpip_iperf_lan865x_default/components/TCP_forwardSlash_IP STACK/components/DATA LINK LAYER/components/sercom0.yml</itemPath>
                   <itemPath>tcpip_iperf_lan865x_default/components/TCP_forwardSlash_IP STACK/components/DATA LINK LAYER/components/drvExtMacLan865x.yml</itemPath>
+                  <itemPath>tcpip_iperf_lan865x_default/components/TCP_forwardSlash_IP STACK/components/DATA LINK LAYER/components/drvMiim.yml</itemPath>
                 </logicalFolder>
                 <itemPath>tcpip_iperf_lan865x_default/components/TCP_forwardSlash_IP STACK/components/DATA LINK LAYER/DATA LINK LAYER.yml</itemPath>
               </logicalFolder>
@@ -588,6 +637,14 @@
                   <itemPath>tcpip_iperf_lan865x_default/components/TCP_forwardSlash_IP STACK/components/NETWORK LAYER/components/tcpipIPv4.yml</itemPath>
                 </logicalFolder>
                 <itemPath>tcpip_iperf_lan865x_default/components/TCP_forwardSlash_IP STACK/components/NETWORK LAYER/NETWORK LAYER.yml</itemPath>
+              </logicalFolder>
+              <logicalFolder name="PRESENTATION LAYER"
+                             displayName="PRESENTATION LAYER"
+                             projectFiles="true">
+                <logicalFolder name="components" displayName="components" projectFiles="true">
+                  <itemPath>tcpip_iperf_lan865x_default/components/TCP_forwardSlash_IP STACK/components/PRESENTATION LAYER/components/net_Pres.yml</itemPath>
+                </logicalFolder>
+                <itemPath>tcpip_iperf_lan865x_default/components/TCP_forwardSlash_IP STACK/components/PRESENTATION LAYER/PRESENTATION LAYER.yml</itemPath>
               </logicalFolder>
               <logicalFolder name="TRANSPORT LAYER"
                              displayName="TRANSPORT LAYER"
@@ -606,9 +663,11 @@
           <itemPath>tcpip_iperf_lan865x_default/components/drv_spi_0.yml</itemPath>
           <itemPath>tcpip_iperf_lan865x_default/components/drvExtMacLan865x_0.yml</itemPath>
           <itemPath>tcpip_iperf_lan865x_default/components/tc0.yml</itemPath>
+          <itemPath>tcpip_iperf_lan865x_default/components/tcpipNetConfig_1.yml</itemPath>
           <itemPath>tcpip_iperf_lan865x_default/components/HarmonyCore.yml</itemPath>
           <itemPath>tcpip_iperf_lan865x_default/components/tcpipNetConfig_0.yml</itemPath>
           <itemPath>tcpip_iperf_lan865x_default/components/dfp.yml</itemPath>
+          <itemPath>tcpip_iperf_lan865x_default/components/lib_emulated_eeprom.yml</itemPath>
           <itemPath>tcpip_iperf_lan865x_default/components/nvmctrl.yml</itemPath>
           <itemPath>tcpip_iperf_lan865x_default/components/sys_command.yml</itemPath>
           <itemPath>tcpip_iperf_lan865x_default/components/sys_console.yml</itemPath>
@@ -651,6 +710,22 @@
             <itemPath>../src/config/default/crypto/src/crypto.c</itemPath>
           </logicalFolder>
           <logicalFolder name="driver" displayName="driver" projectFiles="true">
+            <logicalFolder name="ethphy" displayName="ethphy" projectFiles="true">
+              <logicalFolder name="src" displayName="src" projectFiles="true">
+                <logicalFolder name="dynamic" displayName="dynamic" projectFiles="true">
+                  <itemPath>../src/config/default/driver/ethphy/src/dynamic/drv_ethphy.c</itemPath>
+                  <itemPath>../src/config/default/driver/ethphy/src/dynamic/drv_extphy_lan8742a.c</itemPath>
+                </logicalFolder>
+              </logicalFolder>
+            </logicalFolder>
+            <logicalFolder name="gmac" displayName="gmac" projectFiles="true">
+              <logicalFolder name="src" displayName="src" projectFiles="true">
+                <logicalFolder name="dynamic" displayName="dynamic" projectFiles="true">
+                  <itemPath>../src/config/default/driver/gmac/src/dynamic/drv_gmac.c</itemPath>
+                  <itemPath>../src/config/default/driver/gmac/src/dynamic/drv_gmac_lib_same5x.c</itemPath>
+                </logicalFolder>
+              </logicalFolder>
+            </logicalFolder>
             <logicalFolder name="lan865x" displayName="lan865x" projectFiles="true">
               <logicalFolder name="src" displayName="src" projectFiles="true">
                 <logicalFolder name="dynamic" displayName="dynamic" projectFiles="true">
@@ -661,11 +736,24 @@
                 </logicalFolder>
               </logicalFolder>
             </logicalFolder>
+            <logicalFolder name="miim" displayName="miim" projectFiles="true">
+              <logicalFolder name="src" displayName="src" projectFiles="true">
+                <logicalFolder name="dynamic" displayName="dynamic" projectFiles="true">
+                  <itemPath>../src/config/default/driver/miim/src/dynamic/drv_miim.c</itemPath>
+                  <itemPath>../src/config/default/driver/miim/src/dynamic/drv_miim_gmac.c</itemPath>
+                </logicalFolder>
+              </logicalFolder>
+            </logicalFolder>
             <logicalFolder name="spi" displayName="spi" projectFiles="true">
               <itemPath>../src/config/default/driver/spi/src/drv_spi.c</itemPath>
             </logicalFolder>
           </logicalFolder>
           <logicalFolder name="library" displayName="library" projectFiles="true">
+            <logicalFolder name="emulated_eeprom"
+                           displayName="emulated_eeprom"
+                           projectFiles="true">
+              <itemPath>../src/config/default/library/emulated_eeprom/emulated_eeprom.c</itemPath>
+            </logicalFolder>
             <logicalFolder name="tcpip" displayName="tcpip" projectFiles="true">
               <logicalFolder name="src" displayName="src" projectFiles="true">
                 <logicalFolder name="common" displayName="common" projectFiles="true">
@@ -688,7 +776,18 @@
                 <itemPath>../src/config/default/library/tcpip/src/tcpip_notify.c</itemPath>
                 <itemPath>../src/config/default/library/tcpip/src/tcpip_packet.c</itemPath>
                 <itemPath>../src/config/default/library/tcpip/src/udp.c</itemPath>
+                <itemPath>../src/config/default/library/tcpip/src/tcpip_mac_bridge.c</itemPath>
+                <itemPath>../src/config/default/library/tcpip/src/telnet.c</itemPath>
               </logicalFolder>
+            </logicalFolder>
+          </logicalFolder>
+          <logicalFolder name="net_pres" displayName="net_pres" projectFiles="true">
+            <logicalFolder name="pres" displayName="pres" projectFiles="true">
+              <logicalFolder name="src" displayName="src" projectFiles="true">
+                <itemPath>../src/config/default/net_pres/pres/src/net_pres.c</itemPath>
+              </logicalFolder>
+              <itemPath>../src/config/default/net_pres/pres/net_pres_enc_glue.c</itemPath>
+              <itemPath>../src/config/default/net_pres/pres/net_pres_cert_store.c</itemPath>
             </logicalFolder>
           </logicalFolder>
           <logicalFolder name="peripheral" displayName="peripheral" projectFiles="true">
@@ -913,6 +1012,7 @@
       <C32>
         <property key="additional-warnings" value="true"/>
         <property key="addresss-attribute-use" value="false"/>
+        <property key="appendMe" value=""/>
         <property key="cast-align" value="false"/>
         <property key="code-model" value="default"/>
         <property key="const-model" value="default"/>
@@ -992,6 +1092,7 @@
         <property key="additional-options-use-response-files" value="false"/>
         <property key="additional-options-write-sla" value="false"/>
         <property key="allocate-dinit" value="false"/>
+        <property key="appendMe" value=""/>
         <property key="code-dinit" value="false"/>
         <property key="ebase-addr" value=""/>
         <property key="enable-check-sections" value="false"/>
@@ -1010,7 +1111,7 @@
         <property key="generate-16-bit-code" value="false"/>
         <property key="generate-cross-reference-file" value="false"/>
         <property key="generate-micro-compressed-code" value="false"/>
-        <property key="heap-size" value="44960"/>
+        <property key="heap-size" value="163840"/>
         <property key="input-libraries" value=""/>
         <property key="kseg-length" value=""/>
         <property key="kseg-origin" value=""/>
@@ -1024,7 +1125,7 @@
         <property key="oXC16ld-stackguard" value="16"/>
         <property key="oXC32ld-extra-opts" value=""/>
         <property key="optimization-level" value="-O2"/>
-        <property key="preprocessor-macros" value=""/>
+        <property key="preprocessor-macros" value="ROM_LENGTH=0xfc000"/>
         <property key="remove-unused-sections" value="true"/>
         <property key="report-memory-usage" value="false"/>
         <property key="serial-length" value=""/>
@@ -1037,6 +1138,7 @@
       <C32CPP>
         <property key="additional-warnings" value="false"/>
         <property key="addresss-attribute-use" value="false"/>
+        <property key="appendMe" value=""/>
         <property key="check-new" value="false"/>
         <property key="eh-specs" value="true"/>
         <property key="enable-app-io" value="false"/>
@@ -1065,6 +1167,7 @@
         <property key="use-indirect-calls" value="false"/>
       </C32CPP>
       <C32Global>
+        <property key="appendMe" value=""/>
         <property key="combine-sourcefiles" value="false"/>
         <property key="common-include-directories" value=""/>
         <property key="common-macros" value=""/>
@@ -1119,6 +1222,8 @@
         <property key="memories.programmemory" value="true"/>
         <property key="memories.programmemory.ranges" value="0-fffff"/>
         <property key="poweroptions.powerenable" value="false"/>
+        <property key="programmerToGoFilePath"
+                  value="C:/work/t1s_bridge/bridge/harmony/net_10base_t1s/apps/tcpip_iperf_lan865x/firmware/tcpip_iperf_lan865x.X/debug/default/tcpip_iperf_lan865x_ptg"/>
         <property key="programoptions.eraseb4program" value="true"/>
         <property key="programoptions.preservedataflash" value="false"/>
         <property key="programoptions.preservedataflash.ranges"

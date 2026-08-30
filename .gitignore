@@ -4,6 +4,7 @@
 *.d
 *.log
 *.inx
+*.ctu-info
 mcc-manifest-autosave.yml
 **/nbproject/private
 **/nbproject/Makefile-*

@@ -110,6 +110,10 @@ const DRV_LAN865X_Configuration drvLan865xInitData[] = {
 // </editor-fold>
 
 
+/* Forward declaration of GMAC initialization data */
+const TCPIP_MODULE_MAC_PIC32C_CONFIG tcpipGMACInitData;
+
+
 // <editor-fold defaultstate="collapsed" desc="DRV_SPI Instance 0 Initialization Data">
 
 /* SPI Client Objects Pool */
@@ -193,6 +197,12 @@ static const DRV_SPI_INIT drvSPI0InitData =
     .interruptSources = &drvSPI0InterruptSources,
 };
 // </editor-fold>
+/* Forward declaration of MIIM 0 initialization data */
+static const DRV_MIIM_INIT drvMiimInitData_0;
+
+/* Forward declaration of PHY initialization data */
+const DRV_ETHPHY_INIT tcpipPhyInitData_LAN8742A;
+
 
 
 
@@ -229,6 +239,15 @@ const TCPIP_ARP_MODULE_CONFIG tcpipARPInitData =
     .purgeQuanta        = TCPIP_ARP_CACHE_PURGE_QUANTA, 
     .retries            = TCPIP_ARP_CACHE_ENTRY_RETRIES, 
     .gratProbeCount     = TCPIP_ARP_GRATUITOUS_PROBE_COUNT,
+};
+/*** telnet Server Initialization Data ***/
+const TCPIP_TELNET_MODULE_CONFIG tcpipTelnetInitData =
+{ 
+    .nConnections   = TCPIP_TELNET_MAX_CONNECTIONS,
+    .sktTxBuffSize  = TCPIP_TELNET_SKT_TX_BUFF_SIZE,
+    .sktRxBuffSize  = TCPIP_TELNET_SKT_RX_BUFF_SIZE,
+    .listenPort     = TCPIP_TELNET_LISTEN_PORT,
+    .configFlags    = TCPIP_TELNET_CONFIG_FLAGS,
 };
 
 
@@ -293,7 +312,31 @@ const TCPIP_IPV4_MODULE_CONFIG  tcpipIPv4InitData =
 
 
 
+TCPIP_MAC_BRIDGE_ENTRY_BIN tcpipMacbridgeTable[2] = 
+{
+    {0},
+    {1},
+};
 
+/*** TCPIP MAC Bridge Initialization Data ***/
+const TCPIP_MAC_BRIDGE_CONFIG  tcpipBridgeInitData = 
+{
+    .purgeTimeout = TCPIP_MAC_BRIDGE_ENTRY_TIMEOUT,
+    .transitDelay = TCPIP_MAC_BRIDGE_MAX_TRANSIT_DELAY,
+    .fdbEntries = TCPIP_MAC_BRIDGE_FDB_TABLE_ENTRIES,
+    .pktPoolSize = TCPIP_MAC_BRIDGE_PACKET_POOL_SIZE,
+    .pktSize = TCPIP_MAC_BRIDGE_PACKET_SIZE,
+    .dcptPoolSize = TCPIP_MAC_BRIDGE_DCPT_POOL_SIZE,
+    .pktReplenish = TCPIP_MAC_BRIDGE_PACKET_POOL_REPLENISH,
+    .dcptReplenish = TCPIP_MAC_BRIDGE_DCPT_POOL_REPLENISH,
+    .bridgeFlags = TCPIP_MC_BRIDGE_INIT_FLAGS,
+    .bridgeTableSize = 2,
+    .bridgeTable = (const TCPIP_MAC_BRIDGE_ENTRY*)tcpipMacbridgeTable,
+    // advanced
+    .bridgePermTableSize = 0,
+    .bridgePermTable = 0,
+
+};
 
 
 
@@ -328,6 +371,24 @@ const TCPIP_NETWORK_CONFIG __attribute__((unused))  TCPIP_HOSTS_CONFIGURATION[] 
         .pMacObject = &TCPIP_NETWORK_DEFAULT_MAC_DRIVER_IDX0,
 
     },
+
+
+
+    /*** Network Configuration Index 1 ***/
+    {
+        .interface = TCPIP_NETWORK_DEFAULT_INTERFACE_NAME_IDX1,
+        .hostName = TCPIP_NETWORK_DEFAULT_HOST_NAME_IDX1,
+        .macAddr = TCPIP_NETWORK_DEFAULT_MAC_ADDR_IDX1,
+        .ipAddr = TCPIP_NETWORK_DEFAULT_IP_ADDRESS_IDX1,
+        .ipMask = TCPIP_NETWORK_DEFAULT_IP_MASK_IDX1,
+        .gateway = TCPIP_NETWORK_DEFAULT_GATEWAY_IDX1,
+        .priDNS = TCPIP_NETWORK_DEFAULT_DNS_IDX1,
+        .secondDNS = TCPIP_NETWORK_DEFAULT_SECOND_DNS_IDX1,
+        .powerMode = TCPIP_NETWORK_DEFAULT_POWER_MODE_IDX1,
+        .startFlags = TCPIP_NETWORK_DEFAULT_INTERFACE_FLAGS_IDX1,
+        .pMacObject = &TCPIP_NETWORK_DEFAULT_MAC_DRIVER_IDX1,
+
+    },
 };
 
 const size_t TCPIP_HOSTS_CONFIGURATION_SIZE = sizeof (TCPIP_HOSTS_CONFIGURATION) / sizeof (*TCPIP_HOSTS_CONFIGURATION);
@@ -343,12 +404,15 @@ const TCPIP_STACK_MODULE_CONFIG TCPIP_STACK_MODULE_CONFIG_TBL [] =
     {TCPIP_MODULE_TCP,              &tcpipTCPInitData},             // TCPIP_MODULE_TCP
     {TCPIP_MODULE_DNS_CLIENT,       &tcpipDNSClientInitData},       // TCPIP_MODULE_DNS_CLIENT
 
+    {TCPIP_MODULE_TELNET_SERVER,    &tcpipTelnetInitData},          // TCPIP_MODULE_TELNET_SERVER
     {TCPIP_MODULE_COMMAND,          0},                             // TCPIP_MODULE_COMMAND,
     {TCPIP_MODULE_IPERF,            0},                             // TCPIP_MODULE_IPERF,
     { TCPIP_MODULE_MANAGER,         &tcpipHeapConfig },             // TCPIP_MODULE_MANAGER
 
 // MAC modules
+    {TCPIP_MODULE_MAC_PIC32C,       &tcpipGMACInitData},            // TCPIP_MODULE_MAC_PIC32C
     {TCPIP_MODULE_MAC_LAN865X_0,       &drvLan865xInitData[0]},  // TCPIP_MODULE_MAC_LAN865x_0
+    {TCPIP_MODULE_MAC_BRIDGE,       &tcpipBridgeInitData},      // TCPIP_MODULE_MAC_BRIDGE 
 };
 
 const size_t TCPIP_STACK_MODULE_CONFIG_TBL_SIZE = sizeof (TCPIP_STACK_MODULE_CONFIG_TBL) / sizeof (*TCPIP_STACK_MODULE_CONFIG_TBL);
@@ -373,6 +437,7 @@ const size_t TCPIP_STACK_MODULE_CONFIG_TBL_SIZE = sizeof (TCPIP_STACK_MODULE_CON
  *
  ********************************************************************/
 
+extern int TCPIP_STACK_InitCallback( const struct TCPIP_STACK_INIT** ppStackInit );
 
 SYS_MODULE_OBJ TCPIP_STACK_Init(void)
 {
@@ -383,11 +448,207 @@ SYS_MODULE_OBJ TCPIP_STACK_Init(void)
     tcpipInit.nNets = TCPIP_HOSTS_CONFIGURATION_SIZE;
     tcpipInit.pModConfig = TCPIP_STACK_MODULE_CONFIG_TBL;
     tcpipInit.nModules = TCPIP_STACK_MODULE_CONFIG_TBL_SIZE;
-    tcpipInit.initCback = NULL;
+    tcpipInit.initCback = &TCPIP_STACK_InitCallback;
 
     return TCPIP_STACK_Initialize(0, &tcpipInit);
 }
 // </editor-fold>
+
+
+uint8_t txPrioNumToQueIndxGmac [DRV_GMAC_NUMBER_OF_QUEUES];
+uint8_t rxPrioNumToQueIndxGmac [DRV_GMAC_NUMBER_OF_QUEUES];
+
+/*** GMAC Initialization Data ***/
+TCPIP_MODULE_GMAC_QUEUE_CONFIG  gmac_queue_cfg[DRV_GMAC_NUMBER_OF_QUEUES]=
+{
+   {   /** QUEUE 0 Initialization**/
+       .queueTxEnable = true,
+       .queueRxEnable = true,
+       .nRxDescCnt    = 8,
+       .nTxDescCnt    = 8,
+       .rxBufferSize  = 1536,
+       .txMaxPktSize  = 1536,
+       .nRxDedicatedBuffers   = 8,
+       .nRxAddlBuffCount  = 2,
+       .nRxBuffCntThres   = 1,
+       .nRxBuffAllocCnt   = 2,   
+       .queueIntSrc       = GMAC_IRQn,                               
+   },
+};
+
+const TCPIP_MODULE_MAC_PIC32C_CONFIG tcpipGMACInitData =
+{ 
+       .gmac_queue_config = gmac_queue_cfg,
+       .macQueNum = DRV_GMAC_NUMBER_OF_QUEUES, 
+       .txPrioNumToQueIndx = txPrioNumToQueIndxGmac,
+       .rxPrioNumToQueIndx = rxPrioNumToQueIndxGmac,
+       .ethFlags               = TCPIP_GMAC_ETH_OPEN_FLAGS,    
+       .linkInitDelay          = DRV_LAN8742A_PHY_LINK_INIT_DELAY,
+       .ethModuleId            = TCPIP_GMAC_MODULE_ID,
+       .pPhyBase               = &DRV_ETHPHY_OBJECT_BASE_Default,
+       .pPhyInit               = &tcpipPhyInitData_LAN8742A,
+       .checksumOffloadRx      = DRV_GMAC_RX_CHKSM_OFFLOAD,
+       .checksumOffloadTx      = DRV_GMAC_TX_CHKSM_OFFLOAD,
+       .macTxPrioNum           = TCPIP_GMAC_TX_PRIO_COUNT,
+       .macRxPrioNum           = TCPIP_GMAC_RX_PRIO_COUNT,  
+       .macRxFilt              = TCPIP_GMAC_RX_FILTERS,
+};
+
+
+/*** MIIM Driver Instance 0 Configuration ***/
+static const DRV_MIIM_INIT drvMiimInitData_0 =
+{
+   .miimId = DRV_MIIM_ETH_MODULE_ID_0,
+};
+
+/* Net Presentation Layer Data Definitions */
+#include "net_pres/pres/net_pres_enc_glue.h"
+
+static const NET_PRES_TransportObject netPresTransObject0SS = {
+    .fpOpen        = (NET_PRES_TransOpen)TCPIP_TCP_ServerOpen,
+    .fpLocalBind         = (NET_PRES_TransBind)TCPIP_TCP_Bind,
+    .fpRemoteBind        = (NET_PRES_TransBind)TCPIP_TCP_RemoteBind,
+    .fpOptionGet         = (NET_PRES_TransOption)TCPIP_TCP_OptionsGet,
+    .fpOptionSet         = (NET_PRES_TransOption)TCPIP_TCP_OptionsSet,
+    .fpIsConnected       = (NET_PRES_TransBool)TCPIP_TCP_IsConnected,
+    .fpWasReset          = (NET_PRES_TransBool)TCPIP_TCP_WasReset,
+    .fpWasDisconnected   = (NET_PRES_TransBool)TCPIP_TCP_WasDisconnected,
+    .fpDisconnect        = (NET_PRES_TransBool)TCPIP_TCP_Disconnect,
+    .fpConnect           = (NET_PRES_TransBool)TCPIP_TCP_Connect,
+    .fpClose             = (NET_PRES_TransClose)TCPIP_TCP_Close,
+    .fpSocketInfoGet     = (NET_PRES_TransSocketInfoGet)TCPIP_TCP_SocketInfoGet,
+    .fpFlush             = (NET_PRES_TransBool)TCPIP_TCP_Flush,
+    .fpPeek              = (NET_PRES_TransPeek)TCPIP_TCP_ArrayPeek,
+    .fpDiscard           = (NET_PRES_TransDiscard)TCPIP_TCP_Discard,
+    .fpHandlerRegister   = (NET_PRES_TransHandlerRegister)TCPIP_TCP_SignalHandlerRegister,
+    .fpHandlerDeregister = (NET_PRES_TransSignalHandlerDeregister)TCPIP_TCP_SignalHandlerDeregister,
+    .fpRead              = (NET_PRES_TransRead)TCPIP_TCP_ArrayGet,
+    .fpWrite             = (NET_PRES_TransWrite)TCPIP_TCP_ArrayPut,
+    .fpReadyToRead       = (NET_PRES_TransReady)TCPIP_TCP_GetIsReady,
+    .fpReadyToWrite      = (NET_PRES_TransReady)TCPIP_TCP_PutIsReady,
+    .fpIsPortDefaultSecure = (NET_PRES_TransIsPortDefaultSecured)TCPIP_Helper_TCPSecurePortGet,
+};
+static const NET_PRES_TransportObject netPresTransObject0SC = {
+    .fpOpen        = (NET_PRES_TransOpen)TCPIP_TCP_ClientOpen,
+    .fpLocalBind         = (NET_PRES_TransBind)TCPIP_TCP_Bind,
+    .fpRemoteBind        = (NET_PRES_TransBind)TCPIP_TCP_RemoteBind,
+    .fpOptionGet         = (NET_PRES_TransOption)TCPIP_TCP_OptionsGet,
+    .fpOptionSet         = (NET_PRES_TransOption)TCPIP_TCP_OptionsSet,
+    .fpIsConnected       = (NET_PRES_TransBool)TCPIP_TCP_IsConnected,
+    .fpWasReset          = (NET_PRES_TransBool)TCPIP_TCP_WasReset,
+    .fpWasDisconnected   = (NET_PRES_TransBool)TCPIP_TCP_WasDisconnected,
+    .fpDisconnect        = (NET_PRES_TransBool)TCPIP_TCP_Disconnect,
+    .fpConnect           = (NET_PRES_TransBool)TCPIP_TCP_Connect,
+    .fpClose             = (NET_PRES_TransClose)TCPIP_TCP_Close,
+    .fpSocketInfoGet     = (NET_PRES_TransSocketInfoGet)TCPIP_TCP_SocketInfoGet,
+    .fpFlush             = (NET_PRES_TransBool)TCPIP_TCP_Flush,
+    .fpPeek              = (NET_PRES_TransPeek)TCPIP_TCP_ArrayPeek,
+    .fpDiscard           = (NET_PRES_TransDiscard)TCPIP_TCP_Discard,
+    .fpHandlerRegister   = (NET_PRES_TransHandlerRegister)TCPIP_TCP_SignalHandlerRegister,
+    .fpHandlerDeregister = (NET_PRES_TransSignalHandlerDeregister)TCPIP_TCP_SignalHandlerDeregister,
+    .fpRead              = (NET_PRES_TransRead)TCPIP_TCP_ArrayGet,
+    .fpWrite             = (NET_PRES_TransWrite)TCPIP_TCP_ArrayPut,
+    .fpReadyToRead       = (NET_PRES_TransReady)TCPIP_TCP_GetIsReady,
+    .fpReadyToWrite      = (NET_PRES_TransReady)TCPIP_TCP_PutIsReady,
+    .fpIsPortDefaultSecure = (NET_PRES_TransIsPortDefaultSecured)TCPIP_Helper_TCPSecurePortGet,
+};
+static const NET_PRES_TransportObject netPresTransObject0DS = {
+    .fpOpen        = (NET_PRES_TransOpen)TCPIP_UDP_ServerOpen,
+    .fpLocalBind         = (NET_PRES_TransBind)TCPIP_UDP_Bind,
+    .fpRemoteBind        = (NET_PRES_TransBind)TCPIP_UDP_RemoteBind,
+    .fpOptionGet         = (NET_PRES_TransOption)TCPIP_UDP_OptionsGet,
+    .fpOptionSet         = (NET_PRES_TransOption)TCPIP_UDP_OptionsSet,
+    .fpIsConnected       = (NET_PRES_TransBool)TCPIP_UDP_IsConnected,
+    .fpWasReset          = NULL,
+    .fpWasDisconnected   = NULL,
+    .fpDisconnect        = (NET_PRES_TransBool)TCPIP_UDP_Disconnect,
+    .fpConnect          = NULL,
+    .fpClose             = (NET_PRES_TransClose)TCPIP_UDP_Close,
+    .fpSocketInfoGet     = (NET_PRES_TransSocketInfoGet)TCPIP_UDP_SocketInfoGet,
+    .fpFlush             = (NET_PRES_TransBool)TCPIP_UDP_Flush,
+    .fpPeek              = NULL,
+    .fpDiscard           = (NET_PRES_TransDiscard)TCPIP_UDP_Discard,
+    .fpHandlerRegister   = (NET_PRES_TransHandlerRegister)TCPIP_UDP_SignalHandlerRegister,
+    .fpHandlerDeregister = (NET_PRES_TransSignalHandlerDeregister)TCPIP_UDP_SignalHandlerDeregister,
+    .fpRead              = (NET_PRES_TransRead)TCPIP_UDP_ArrayGet,
+    .fpWrite             = (NET_PRES_TransWrite)TCPIP_UDP_ArrayPut,
+    .fpReadyToRead       = (NET_PRES_TransReady)TCPIP_UDP_GetIsReady,
+    .fpReadyToWrite      = (NET_PRES_TransReady)TCPIP_UDP_PutIsReady,
+    .fpIsPortDefaultSecure = (NET_PRES_TransIsPortDefaultSecured)TCPIP_Helper_UDPSecurePortGet,
+};
+static const NET_PRES_TransportObject netPresTransObject0DC = {
+    .fpOpen        = (NET_PRES_TransOpen)TCPIP_UDP_ClientOpen,
+    .fpLocalBind         = (NET_PRES_TransBind)TCPIP_UDP_Bind,
+    .fpRemoteBind        = (NET_PRES_TransBind)TCPIP_UDP_RemoteBind,
+    .fpOptionGet         = (NET_PRES_TransOption)TCPIP_UDP_OptionsGet,
+    .fpOptionSet         = (NET_PRES_TransOption)TCPIP_UDP_OptionsSet,
+    .fpIsConnected       = (NET_PRES_TransBool)TCPIP_UDP_IsConnected,
+    .fpWasReset          = NULL,
+    .fpWasDisconnected   = NULL,
+    .fpDisconnect        = (NET_PRES_TransBool)TCPIP_UDP_Disconnect,
+    .fpConnect          = NULL,
+    .fpClose             = (NET_PRES_TransClose)TCPIP_UDP_Close,
+    .fpSocketInfoGet     = (NET_PRES_TransSocketInfoGet)TCPIP_UDP_SocketInfoGet,
+    .fpFlush             = (NET_PRES_TransBool)TCPIP_UDP_Flush,
+    .fpPeek              = NULL,
+    .fpDiscard           = (NET_PRES_TransDiscard)TCPIP_UDP_Discard,
+    .fpHandlerRegister   = (NET_PRES_TransHandlerRegister)TCPIP_UDP_SignalHandlerRegister,
+    .fpHandlerDeregister = (NET_PRES_TransSignalHandlerDeregister)TCPIP_UDP_SignalHandlerDeregister,
+    .fpRead              = (NET_PRES_TransRead)TCPIP_UDP_ArrayGet,
+    .fpWrite             = (NET_PRES_TransWrite)TCPIP_UDP_ArrayPut,
+    .fpReadyToRead       = (NET_PRES_TransReady)TCPIP_UDP_GetIsReady,
+    .fpReadyToWrite      = (NET_PRES_TransReady)TCPIP_UDP_PutIsReady,
+    .fpIsPortDefaultSecure = (NET_PRES_TransIsPortDefaultSecured)TCPIP_Helper_UDPSecurePortGet,
+};
+
+static const NET_PRES_INST_DATA netPresCfgs[] = 
+{  
+        
+    {
+        .pTransObject_ss = &netPresTransObject0SS,
+        .pTransObject_sc = &netPresTransObject0SC,
+        .pTransObject_ds = &netPresTransObject0DS,
+        .pTransObject_dc = &netPresTransObject0DC,
+        .pProvObject_ss = NULL,
+        .pProvObject_sc = NULL,
+        .pProvObject_ds = NULL,
+        .pProvObject_dc = NULL,
+    },
+        
+};
+
+static const NET_PRES_INIT_DATA netPresInitData = 
+{
+    .numLayers = sizeof(netPresCfgs) / sizeof(NET_PRES_INST_DATA),
+    .pInitData = netPresCfgs
+};
+  
+ 
+
+/*** LAN8742A PHY Driver Time-Out Initialization Data ***/
+DRV_ETHPHY_TMO drvlan8742aTmo = 
+{
+    .resetTmo = DRV_ETHPHY_LAN8742A_RESET_CLR_TMO,
+    .aNegDoneTmo = DRV_ETHPHY_LAN8742A_NEG_DONE_TMO,
+    .aNegInitTmo = DRV_ETHPHY_LAN8742A_NEG_INIT_TMO,    
+};
+
+/*** ETH PHY Initialization Data ***/
+const DRV_ETHPHY_INIT tcpipPhyInitData_LAN8742A =
+{    
+    .ethphyId               = DRV_LAN8742A_PHY_PERIPHERAL_ID,
+    .phyAddress             = DRV_LAN8742A_PHY_ADDRESS,
+    .phyFlags               = DRV_LAN8742A_PHY_CONFIG_FLAGS,
+    .pPhyObject             = &DRV_ETHPHY_OBJECT_LAN8742A,
+    .ethphyTmo              = &drvlan8742aTmo,
+    .pMiimObject            = &DRV_MIIM_OBJECT_BASE_Default,
+    .pMiimInit              = &drvMiimInitData_0,
+    .miimIndex              = 0,
+
+
+    .resetFunction          = 0,
+};
+
 
 
 
@@ -518,6 +779,12 @@ void SYS_Initialize ( void* data )
     sysObj.drvSPI0 = DRV_SPI_Initialize(DRV_SPI_INDEX_0, (SYS_MODULE_INIT *)&drvSPI0InitData);
 
 
+   /* Initialize the MIIM Driver Instance 0*/
+   sysObj.drvMiim_0 = DRV_MIIM_OBJECT_BASE_Default.miim_Initialize(DRV_MIIM_DRIVER_INDEX_0, (const SYS_MODULE_INIT *) &drvMiimInitData_0); 
+
+    /* Initialize EMULATED_EEPROM0 Library Instance */
+    sysObj.libEMULATED_EEPROM0 = EMU_EEPROM_Initialize(EMULATED_EEPROM0, (SYS_MODULE_INIT *)NULL);
+
     /* MISRA C-2012 Rule 11.3, 11.8 deviated below. Deviation record ID -  
     H3_MISRAC_2012_R_11_3_DR_1 & H3_MISRAC_2012_R_11_8_DR_1*/
         
@@ -538,6 +805,8 @@ void SYS_Initialize ( void* data )
     /* MISRAC 2012 deviation block end */
 
 
+   /* Network Presentation Layer Initialization */
+   sysObj.netPres = NET_PRES_Initialize(0, (SYS_MODULE_INIT*)&netPresInitData);
    /* TCPIP Stack Initialization */
    sysObj.tcpip = TCPIP_STACK_Init();
    SYS_ASSERT(sysObj.tcpip != SYS_MODULE_OBJ_INVALID, "TCPIP_STACK_Init Failed" );

@@ -35,7 +35,7 @@ data:
       - children:
         - attributes:
             id: tcpipNetConfig
-            value: '1'
+            value: '2'
           type: Dynamic
         type: Values
       type: Integer
@@ -46,7 +46,7 @@ data:
       - children:
         - attributes:
             id: tcpipNetConfig
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -57,8 +57,62 @@ data:
       - children:
         - attributes:
             id: tcpipNetConfig
-            value: '0'
+            value: '2'
           type: Dynamic
         type: Values
       type: Integer
+    TCPIP_STACK_MAC_BRIDGE_COMMANDS:
+      attributes:
+        id: TCPIP_STACK_MAC_BRIDGE_COMMANDS
+      children:
+      - children:
+        - attributes:
+            id: visible
+          children:
+          - type: Value
+            value: 'true'
+          type: Boolean
+        type: Attributes
+      - children:
+        - attributes:
+            value: 'true'
+          type: User
+        type: Values
+      type: Boolean
+    TCPIP_MAC_BRIDGE_STATISTICS:
+      attributes:
+        id: TCPIP_MAC_BRIDGE_STATISTICS
+      children:
+      - children:
+        - attributes:
+            id: visible
+          children:
+          - type: Value
+            value: 'true'
+          type: Boolean
+        type: Attributes
+      - children:
+        - attributes:
+            value: 'true'
+          type: User
+        type: Values
+      type: Boolean
+    TCPIP_MAC_BRIDGE_EVENT_NOTIFY:
+      attributes:
+        id: TCPIP_MAC_BRIDGE_EVENT_NOTIFY
+      children:
+      - children:
+        - attributes:
+            id: visible
+          children:
+          - type: Value
+            value: 'true'
+          type: Boolean
+        type: Attributes
+      - children:
+        - attributes:
+            value: 'true'
+          type: User
+        type: Values
+      type: Boolean
   userData: {}

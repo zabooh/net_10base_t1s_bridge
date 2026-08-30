@@ -8,6 +8,7 @@ groupModules:
   modules:
   - tcpipDns
   - tcpipIperf
+  - tcpipTelnet
 - group: BASIC CONFIGURATION
   modules:
   - tcpipCmd
@@ -15,6 +16,9 @@ groupModules:
 - group: DATA LINK LAYER
   modules:
   - drvExtMacLan865x
+  - drvExtPhyLan8742a
+  - drvGmac
+  - drvMiim
   - drv_spi
   - sercom0
   - tcpipNetConfig
@@ -23,12 +27,16 @@ groupModules:
   - tcpipArp
   - tcpipIPv4
   - tcpipIcmp
+- group: PRESENTATION LAYER
+  modules:
+  - net_Pres
 - group: TCP/IP STACK
   modules:
   - APPLICATION LAYER
   - BASIC CONFIGURATION
   - DATA LINK LAYER
   - NETWORK LAYER
+  - PRESENTATION LAYER
   - TRANSPORT LAYER
 - group: TRANSPORT LAYER
   modules:
@@ -43,6 +51,7 @@ modules:
 - drv_spi_0
 - evsys
 - lib_crypto
+- lib_emulated_eeprom
 - lib_wolfcrypt
 - nvmctrl
 - sercom1
@@ -53,6 +62,7 @@ modules:
 - sys_time
 - tc0
 - tcpipNetConfig_0
+- tcpipNetConfig_1
 generatedFileHashHistoryMap:
 - file: ..\src\app.c
   hash: 632c78c323cb9f8c6359f20337440c08f8461eb4b0304552b6a3cfd5c4052620
@@ -63,13 +73,13 @@ generatedFileHashHistoryMap:
 - file: ..\src\config\default\config.h
   hash: 97d048aca9fc536435fb697f0f2a72f52d90d14b9f2ac52dc55b627c4850848e
 - file: ..\src\config\default\configuration.h
-  hash: 5be1359c1551d21e6adcd2759776061688b5958d21c72c9fb93ec42f668dc624
+  hash: 69913da5ef7ccb0cd91da9356c23eec99dc0aef2f04049e9d3958bcc19720e59
 - file: ..\src\config\default\crypto\crypto.h
   hash: 63bc6589b6538aeb76bc00351d3b99016c8357699c9403067f79a7f43461d208
 - file: ..\src\config\default\crypto\src\crypto.c
   hash: 4c1b271685e092105d8271ee0615ac36c95abbea944b3e3c8e5bc194da00c014
 - file: ..\src\config\default\definitions.h
-  hash: e01245dcc667be0403c85a4e02ceb912c0f77349c38a93ba36f84ce4d9ce479b
+  hash: 3508d08fe8214dea8b98e777f203e57ba94e817a968842fb620a743d52af5aec
 - file: ..\src\config\default\device.h
   hash: 67a6bee1094722da22e7fbc3885c7336ffedf29e6499c111ce29eb928d54bee6
 - file: ..\src\config\default\device_cache.h
@@ -80,6 +90,34 @@ generatedFileHashHistoryMap:
   hash: 042fdd289460dbddb8e805850af7e3ac9aea95468e37414959781ebc5b2f454d
 - file: ..\src\config\default\driver\driver_common.h
   hash: 5217965f6720b4fdf717e99ce9df4f2c9fbd82bbbc9655847166d1eefa806fee
+- file: ..\src\config\default\driver\ethphy\drv_ethphy.h
+  hash: d26505e4266e34c422f743a1746e1daa46faef93364fd50d62d7da9ad6dca397
+- file: ..\src\config\default\driver\ethphy\drv_extphy_lan8742a.h
+  hash: 0ae2652bb3979b1a5df88b95f60deee69f859c0930b9b6f31aca77e7dc7fb18f
+- file: ..\src\config\default\driver\ethphy\src\drv_ethphy_local.h
+  hash: e37b4f4d0f165217be78edde0044799a66dd4bc152ba041f04e3c63e0f388962
+- file: ..\src\config\default\driver\ethphy\src\dynamic\drv_ethphy.c
+  hash: 6fe4940248b04ce0004ca61a543418e2ee507fe97e925e32d18da3e38fda0961
+- file: ..\src\config\default\driver\ethphy\src\dynamic\drv_extphy_lan8742a.c
+  hash: aa6d54a6e087026d9f3fe613b7380a06ae3a04ee8022868337061aa12e44673a
+- file: ..\src\config\default\driver\ethphy\src\dynamic\drv_extphy_lan8742a_priv.h
+  hash: 4b8e556d71f1e09732c06d68e852eb489c3740d0cdbba6c6d6ad581467173dcd
+- file: ..\src\config\default\driver\ethphy\src\dynamic\drv_extphy_regs.h
+  hash: 7543faff37b6b5723e3c5e989a2ae35da7c9e232b71303df818ad51f479a06cb
+- file: ..\src\config\default\driver\gmac\drv_gmac.h
+  hash: e8a85632f3b90a8e176bed83bf8c77d8a422a56e7a33767489f459d8ef4c8e22
+- file: ..\src\config\default\driver\gmac\src\drv_gmac_local.h
+  hash: 63d1445cb3c5fc660742af9766a137fedd14b14405ddbee59b6ad35a7676d656
+- file: ..\src\config\default\driver\gmac\src\dynamic\_gmac_dcpt_lists.h
+  hash: eff3dde2f3e2ab4b1ffb4803d46bb7987c74c8a4f4fdedaf518821b986f7fcfc
+- file: ..\src\config\default\driver\gmac\src\dynamic\drv_gmac.c
+  hash: 1e839daf50ca96a819cd1eed5887d930139f2281f6a0e58bc3bf9ec2a92052d2
+- file: ..\src\config\default\driver\gmac\src\dynamic\drv_gmac_lib.h
+  hash: 2512f01fd46a44bf43bf595f31fc94487d4286cc494c986306e04479cf772c57
+- file: ..\src\config\default\driver\gmac\src\dynamic\drv_gmac_lib_sam.h
+  hash: f6de17c98e354bef571dfe7eba2f7d426e2930d76d67bf2bc0252d0cd1be4f54
+- file: ..\src\config\default\driver\gmac\src\dynamic\drv_gmac_lib_same5x.c
+  hash: 4705af14dc712136c4ebdaf658846767f5390f4f0a80773bdfa11ec8245918ff
 - file: ..\src\config\default\driver\lan865x\drv_lan865x.h
   hash: 688a076310dc3be435fde44541b44ab5b30461cc454f66562f90b655c54a9506
 - file: ..\src\config\default\driver\lan865x\src\dynamic\drv_lan865x_api.c
@@ -94,6 +132,16 @@ generatedFileHashHistoryMap:
   hash: 57857f15045761971b93c2c0a75ee81fc5d4db7a3696fd641190655d55ec55be
 - file: ..\src\config\default\driver\lan865x\src\dynamic\tc6\tc6.h
   hash: bc45321f6969dbd1408eba0c772f3b3a57826d8435224801f2bb58bbc7ede63d
+- file: ..\src\config\default\driver\miim\drv_miim.h
+  hash: b22300b23bb5dbfb2415b06fdf8e905b53314afa9036ff6d780d951654538725
+- file: ..\src\config\default\driver\miim\src\drv_miim_local.h
+  hash: 2c16db09bc51d8d6661ff04794c4e1197a7972ce459ab1c9ba6f67c812d52308
+- file: ..\src\config\default\driver\miim\src\dynamic\drv_miim.c
+  hash: e5d890c0e8efbd724f1c5ee9a638a540c3f49fcd4eb09f1e0021dbf37b1481d8
+- file: ..\src\config\default\driver\miim\src\dynamic\drv_miim_device.h
+  hash: f4cf73da9e1f7c8341a34e041590513e7cc13a6c5dbfc1c0a5bba31c7547e32b
+- file: ..\src\config\default\driver\miim\src\dynamic\drv_miim_gmac.c
+  hash: ab103ed17cde4bf4d15a30be796b21770072ab77931a54c6a7acebf512995159
 - file: ..\src\config\default\driver\spi\drv_spi.h
   hash: 9a6daa12b48114aa08202529bea2a2a3d9d98a4365d864f10380ad2244b139d2
 - file: ..\src\config\default\driver\spi\drv_spi_definitions.h
@@ -105,13 +153,21 @@ generatedFileHashHistoryMap:
 - file: ..\src\config\default\exceptions.c
   hash: 251729130964d6a74b7a9ee99700b57a16c0e1b5d31029678e06ecd3d8dedc9e
 - file: ..\src\config\default\initialization.c
-  hash: c413cdcb7624a6e177d338a6f1151c9337255694c8cd1d644587aedd066ce0d9
+  hash: dce5c12c796e0bbd514f6f5202ecd690cbf0ab383fc6cc29e7d41e4481826cff
 - file: ..\src\config\default\interrupts.c
-  hash: bd070b09065b143d1ab02fbe65237edc080f9e344dcab10d658b082918737496
+  hash: 3214f665642afe35e2f3f4a35d0fb417de2688d5b6e34bf6c744df2bfe9e950e
 - file: ..\src\config\default\interrupts.h
-  hash: af066703329f74db12111a4936d3a91d3c25fd30b8d7e3c13c414b9035dd9855
+  hash: f849c8ab09a3e8e2e558bb3fd437805ee79964fa9353abbf0bc04b7bed6e31b4
 - file: ..\src\config\default\libc_syscalls.c
   hash: c9afc1b1257829415a1a6746ce3744f0a768b339d59fff2ab3ca1fab58b2a916
+- file: ..\src\config\default\library\emulated_eeprom\emulated_eeprom.c
+  hash: fd94ff6b82a4c07ab5d75c223a63e8a49e0e6a6bc77b5b64000fd3543c341064
+- file: ..\src\config\default\library\emulated_eeprom\emulated_eeprom.h
+  hash: 639e77263b3b2702305e08cd2747b2da5eefaa3bb89070ffc7ded5fd9a23d6b1
+- file: ..\src\config\default\library\emulated_eeprom\emulated_eeprom_definitions.h
+  hash: 31b9fadf28096e75c42c2e469d917c4e80f058213498f18d0c85e97fa83da01f
+- file: ..\src\config\default\library\emulated_eeprom\emulated_eeprom_local.h
+  hash: dcd46d56150ca820ba8f135088103546ccc254ce6ac7576cb7e1edef50527360
 - file: ..\src\config\default\library\tcpip\arp.h
   hash: 450ad6b0a80ffdcf33eab32bf8f662318da13ad5df0896a845cc28a490ff83a6
 - file: ..\src\config\default\library\tcpip\berkeley_api.h
@@ -290,6 +346,8 @@ generatedFileHashHistoryMap:
   hash: fed10c443dce036cfc22dc375650d94e9ffdd080b183fb187885c16e7580adbb
 - file: ..\src\config\default\library\tcpip\src\tcpip_helpers_private.h
   hash: 7143c10241cc548eb8d284ba590bd6b65310d9921afb7119f5b22087839916cc
+- file: ..\src\config\default\library\tcpip\src\tcpip_mac_bridge.c
+  hash: b78d52a7dde96bd4896c5012f23f9186c0d61b2c76b432b8b99cb9acacf94be8
 - file: ..\src\config\default\library\tcpip\src\tcpip_mac_bridge_manager.h
   hash: 85c01b632193be93838f91c7b73e3ba3ef5579d7133fa6bbc209136ba7b96e62
 - file: ..\src\config\default\library\tcpip\src\tcpip_mac_bridge_private.h
@@ -309,11 +367,13 @@ generatedFileHashHistoryMap:
 - file: ..\src\config\default\library\tcpip\src\tcpip_packet.h
   hash: 2e5fb1156038bcc08245c1fd0270d7f40678fa005f0855653c94cb030053f3c0
 - file: ..\src\config\default\library\tcpip\src\tcpip_private.h
-  hash: acb6a1a99592b29879f7dc942039300ba4a9b823ecbf1af7de58394e65a59675
+  hash: 27e313c85067827c3a16ceec730479cd4e04c4e5f5b8210f2d49702a6de95450
 - file: ..\src\config\default\library\tcpip\src\tcpip_reboot_manager.h
   hash: ae0c90024a3a67c01b1e3b624f620ccc2f216577879f5f4977bf400f6c0e33a7
 - file: ..\src\config\default\library\tcpip\src\tcpip_types.h
   hash: a4821acc65597e3d44da41d8acbcaa26664ef03bcc1fe7b62f60fa6c079a71cd
+- file: ..\src\config\default\library\tcpip\src\telnet.c
+  hash: 808fa2151549fe6de65e56c7fa4e5bdaa8bd9ce61f90f0bf0e69550ca893eafe
 - file: ..\src\config\default\library\tcpip\src\telnet_manager.h
   hash: f608ca7b0f96dcd4369192121141c7e5f32354c0d17036280d1b9a943c6f0659
 - file: ..\src\config\default\library\tcpip\src\tftpc_manager.h
@@ -343,7 +403,7 @@ generatedFileHashHistoryMap:
 - file: ..\src\config\default\library\tcpip\tcp.h
   hash: e33c13ce23cdc23473bef55b68ac033f1abc6fcbff919ca82b4af97801137e59
 - file: ..\src\config\default\library\tcpip\tcpip.h
-  hash: bf34ba5f140ea82a6d31df265d5c82ca8ba1071d3160577139c7ce75391f5e22
+  hash: a66ff9785b2835f13c199a73cb5281278b4b5fadcb39e2395c338f7ce8f34b33
 - file: ..\src\config\default\library\tcpip\tcpip_announce.h
   hash: fdb314e051ce514dffcb6f4205c1a826f61e4de8d513b48cae614e9c3a479ae6
 - file: ..\src\config\default\library\tcpip\tcpip_commands.h
@@ -382,10 +442,26 @@ generatedFileHashHistoryMap:
   hash: a44a37e537e93b0deda7bc5fb156b1d506601426d584c2423dcb19143433e7d2
 - file: ..\src\config\default\net_pres\pres\net_pres.h
   hash: 00bfb807c77bf87f5143862267e25971f1702ea6928a66b324f66488f8528076
+- file: ..\src\config\default\net_pres\pres\net_pres_cert_store.c
+  hash: 060dd4de8369830a5e9656c93d71bc9eb37583b67c4d08df625f852d41828358
+- file: ..\src\config\default\net_pres\pres\net_pres_certstore.h
+  hash: 6ccc81a1739ce778fd1642909d4588623600bb5c313853bdc23cd5d613cbef0e
+- file: ..\src\config\default\net_pres\pres\net_pres_enc_glue.c
+  hash: e6a9fc80cac0cd27a2fdcd1004ac5cba7f3baf3088e3cd19643a715680f85513
+- file: ..\src\config\default\net_pres\pres\net_pres_enc_glue.h
+  hash: 8da230e03e79b72ed63fc33429bdd236a89f10e321e0882a1c92365705756c3f
+- file: ..\src\config\default\net_pres\pres\net_pres_encryptionproviderapi.h
+  hash: 91f874ce589dd651c09d0cefa098751281f8b0732bf21b469c6cbf97c20a445f
 - file: ..\src\config\default\net_pres\pres\net_pres_socketapi.h
   hash: ff3e2ebd024aa2108ec02da04201f5a5d492996fa360387b031aac588c43ade1
 - file: ..\src\config\default\net_pres\pres\net_pres_socketapiconversion.h
   hash: fea956ce0a826b0123329a90f2b70e13d18f21e08e0ba8f90b661122ac3e3703
+- file: ..\src\config\default\net_pres\pres\net_pres_transportapi.h
+  hash: 78f49cd8beac27cb483f84138ab8032663022d6c3358689086ff8c97334f3f05
+- file: ..\src\config\default\net_pres\pres\src\net_pres.c
+  hash: 53471d9cdc10275d138f2e4a77495b3e454d04a3b7fbf3cc86c2c61241543f90
+- file: ..\src\config\default\net_pres\pres\src\net_pres_local.h
+  hash: bb6ecb92bc005faf7f19031f4945d5d188a24c12d58c7a5f0dd1c0b03f7d659b
 - file: ..\src\config\default\osal\osal.h
   hash: 1cfe3b61d9693b2369922041eef33fe16b3c1ccd9c85d4ded808b805f90a869c
 - file: ..\src\config\default\osal\osal_definitions.h
@@ -409,7 +485,7 @@ generatedFileHashHistoryMap:
 - file: ..\src\config\default\peripheral\evsys\plib_evsys.h
   hash: f7d08eb8162f271ce1db384c082586a6624e506aa7f502c64c4ab5a1aadac47d
 - file: ..\src\config\default\peripheral\nvic\plib_nvic.c
-  hash: 46fec047647775359906cb338d1e537ff407d35da195ef551de65221b667b153
+  hash: 975e7b0f16f6e080d594769cb0b317bcc02b40fa6ff2da38b171b559455a96e0
 - file: ..\src\config\default\peripheral\nvic\plib_nvic.h
   hash: 9936ac782115af41003255283fa2f603f4ff2212d16275b7c80ea8d067a9e208
 - file: ..\src\config\default\peripheral\nvmctrl\plib_nvmctrl.c
@@ -417,7 +493,7 @@ generatedFileHashHistoryMap:
 - file: ..\src\config\default\peripheral\nvmctrl\plib_nvmctrl.h
   hash: fd7749dc74a885efd7c593394454abc74afc7cf184123f0315425a3600c26ac5
 - file: ..\src\config\default\peripheral\port\plib_port.c
-  hash: 111526caa6a3fa0edb8abd5b5f0e23620d48ce9ca6aad507baed1cee33f3a881
+  hash: b3cb4d9cb17af8ce8903eeceb30c4cdb4e87cca6c796f2a12a97e8c840a35e34
 - file: ..\src\config\default\peripheral\port\plib_port.h
   hash: 623ce714ecf71ea0b420126b1732ffe8a7634d3ec036dfe7e84915bf321fb7f4
 - file: ..\src\config\default\peripheral\sercom\spi_master\plib_sercom0_spi_master.c
@@ -439,7 +515,7 @@ generatedFileHashHistoryMap:
 - file: ..\src\config\default\peripheral\tc\plib_tc_common.h
   hash: 487b4f489229b8e16b24ab48ddc1f414b095585439f0e10d53b2285fc3979f63
 - file: ..\src\config\default\pin_configurations.csv
-  hash: 5e1eeb7d1a606746b6c51c52de60f33faccfd3b7465ae5bd36af615865aec8c4
+  hash: eb39332ba1fafb5d50ca6410a4398b5677b0288b44d5cb8fe755ce2d78551d11
 - file: ..\src\config\default\startup_xc32.c
   hash: 2916a631dd72c23f29daf3ec7ebc84abec03a29948825df0b1505d670d73fe50
 - file: ..\src\config\default\stdio\xc32_monitor.c
@@ -521,7 +597,7 @@ generatedFileHashHistoryMap:
 - file: ..\src\config\default\system_definitions.h
   hash: 612bd2e1561e9222079ce81f842ab47e962671dfce335e26dd1e53d71602e9e5
 - file: ..\src\config\default\tasks.c
-  hash: 4df3197936ce4c42087ad66f09ed8e34ee134c7b46a13cae34af9105b471e2e5
+  hash: 99c16d5ada47fcc1c54f612e472f4249f058efa52896607467417c277c1b5e5f
 - file: ..\src\config\default\toolchain_specifics.h
   hash: 6fc0551b0fa3362678b3d7a227386fafa343140d31e4da3ad4af972e61cd0acb
 - file: ..\src\config\default\user.h

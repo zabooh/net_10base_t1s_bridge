@@ -16,5 +16,36 @@ customDataClassName: com.microchip.utils_mh3.utils.persistence.CustomModuleData
 data:
   attachments: {}
   elementPosition: {}
-  symbols: {}
+  symbols:
+    TCPIP_TCP_COMMANDS:
+      attributes:
+        id: TCPIP_TCP_COMMANDS
+      children:
+      - children:
+        - attributes:
+            value: 'true'
+          type: User
+        type: Values
+      type: Boolean
+    TCPIP_TCP_EXTERN_PACKET_PROCESS:
+      attributes:
+        id: TCPIP_TCP_EXTERN_PACKET_PROCESS
+      children:
+      - children:
+        - attributes:
+            value: 'true'
+          type: User
+        type: Values
+      type: Boolean
+    TCPIP_TCP_HEAP_SIZE:
+      attributes:
+        id: TCPIP_TCP_HEAP_SIZE
+      children:
+      - children:
+        - attributes:
+            id: tcpipTcp
+            value: '18728'
+          type: Dynamic
+        type: Values
+      type: Integer
   userData: {}
