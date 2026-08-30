@@ -2,13 +2,13 @@
 
 manifest_file_version: 1.0.0
 project: tcpip_iperf_lan865x
-creation_date: 2026-02-17T11:40:31.848+01:00[Europe/Berlin]
+creation_date: 2026-08-30T15:27:17.556+02:00[Europe/Prague]
 operating_system: Windows 11
 mcc_mode: IDE
-mcc_mode_version: v6.30
+mcc_mode_version: v6.35
 device_name: ATSAME54P20A
-compiler: XC32 5.00
-mcc_version: 5.6.4
+compiler: XC32 5.10
+mcc_version: 5.7.0
 mcc_core_version: 5.8.4
 content_manager_version: 6.0.4
 is_mcc_offline: false

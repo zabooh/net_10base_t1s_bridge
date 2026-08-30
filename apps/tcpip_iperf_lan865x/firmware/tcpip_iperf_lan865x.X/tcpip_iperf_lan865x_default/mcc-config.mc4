@@ -83,7 +83,7 @@ generatedFileHashHistoryMap:
 - file: ..\src\config\default\driver\lan865x\drv_lan865x.h
   hash: 688a076310dc3be435fde44541b44ab5b30461cc454f66562f90b655c54a9506
 - file: ..\src\config\default\driver\lan865x\src\dynamic\drv_lan865x_api.c
-  hash: 9468c053f8fef749e006586a6af6f8db2fafdd341a0b11ed0e4bff5d71507511
+  hash: b27993231afcccc1e77b0b0a3759bacf789319d4ff9fd3d45fa200c4e4c96e9f
 - file: ..\src\config\default\driver\lan865x\src\dynamic\drv_lan865x_local.h
   hash: 3d1628619e2261830bd098b56f97fbc37bb73bc16fabe15d49312e6f09593689
 - file: ..\src\config\default\driver\lan865x\src\dynamic\tc6\tc6-conf.h
