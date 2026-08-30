@@ -1058,6 +1058,354 @@ completed step — do not wait until the end of the session.
   correctly throughout this session's testing, not just passing an
   isolated check.
 
+### Committed and pushed (commit `578b86f`)
+
+- The 5-module port plus both boot-hang fixes (DPLL errata timeout,
+  `MIRROR_Initialize()` deferral) were committed and pushed to
+  `origin/master` (`e569c7e..578b86f`) at the user's request. Full CLI
+  verification matrix and bridge regression (see the entries above) were
+  green beforehand.
+
+### Impact analysis: what an MCC "Generate Code" run would do to the three hand patches
+
+- User asked, before actually running Generate Code in MPLAB X, what the
+  concrete consequences would be. Answered and recorded here so this
+  doesn't have to be re-derived next time Generate Code is considered.
+- MCC's Generate Code only rewrites files under `config\default\**`
+  (driven by the `.mc4`/component model); it never touches
+  `firmware\src\*.c/h` directly under `firmware\src\` (i.e. `app.c/h` and
+  all 5 newly-ported modules are completely safe), and it does not touch
+  `nbproject\configurations.xml` (an MPLAB X IDE project-file concern, not
+  an MCC one) - the 5 ported files stay registered as project sources
+  either way. That leaves exactly the three documented-exception hand
+  patches (`CLAUDE.md` section 3) at risk, each with a different severity:
+  1. **`peripheral\clock\plib_clock.c` - most severe.** `FDPLL0_Initialize()`
+     would regenerate back to its original unbounded
+     `while(...DPLLSYNCBUSY...)` polling loops, with the
+     `CLOCK_DPLL0_SYNC_TIMEOUT`-bounded retry removed. Since this loop
+     genuinely never exits on this silicon (Errata DS80000748K 2.13.2 -
+     see the root-cause entry above), **the board would fail to boot at
+     all again**, identically to the hang this session spent most of its
+     time diagnosing. This is the one that absolutely must be re-applied
+     before any post-regenerate build is even worth flashing.
+  2. **`driver\lan865x\src\dynamic\drv_lan865x_api.c` - functional
+     regression, not a boot blocker.** The `mirror_eth0_tx_hook()` call
+     inserted into `DRV_LAN865X_PacketTx()` would be dropped. `mirror`/
+     `sniffer` would keep working for the RX direction (T1S bus -> eth1,
+     wired via `MIRROR_Eth0Rx()` called directly from `app.c`'s packet
+     handler, unaffected) but would silently stop mirroring the bridge's
+     own TX traffic (its own ARP/ping replies) - no crash, no error
+     message, just quieter Wireshark captures than expected.
+  3. **`config\default\initialization.c` - cosmetic/persistence
+     regression, not a boot blocker.** The `#include "env.h"`, the
+     `ENV_Init()`/`env_mac_str()`/`drvLan865xInitData[0].nodeId/nodeCount`
+     block, the `s_macAddrStr0`/`s_macAddrStr1` buffers, and dropping
+     `const` from `drvLan865xInitData[]` would all be reverted.
+     Consequence: persisted MAC addresses (`setenv mac0/mac1` +
+     `saveenv`) would no longer be applied at boot - `TCPIP_HOSTS_
+     CONFIGURATION[]` falls back to the compile-time
+     `TCPIP_NETWORK_DEFAULT_MAC_ADDR_IDX0/1` macros - and the PLCA node
+     ID/count would only be corrected later, at `env_apply()` time in
+     `APP_STATE_SERVICE_TASKS`, instead of being pre-seeded into
+     `drvLan865xInitData[]` before the driver's own init reads it -
+     meaning a brief window right after boot where the node is live on
+     the T1S bus under the wrong PLCA identity, same as before this
+     session's `initialization.c` patch existed.
+- **Net takeaway:** a Generate Code run is not harmless but also not
+  catastrophic - re-applying patch 1 is mandatory just to get a bootable
+  image again; patches 2 and 3 are optional quality-of-life restorations
+  that can be re-applied at leisure afterward. Recommended order after any
+  future Generate Code run: re-apply `plib_clock.c` first, rebuild and
+  flash to confirm the board boots at all, *then* re-apply `drv_lan865x_
+  api.c` and `initialization.c`, rebuild/flash/retest again.
+- **Not yet actually exercised** - this is a predictive analysis from
+  reading the three patches' content, not a verified-by-running-Generate-
+  Code result. Doing that run (MPLAB X GUI, left for the user) and then
+  confirming/correcting this analysis against what MCC actually did is
+  still an open item.
+
+### Sniffer/mirror completeness validation ported and run from the sister project
+
+- User pointed out the sister project (`t1s_100baset_bridge`) had done an
+  extensive, multi-document investigation into the `sniffer`/mirror path
+  (`docs/SNIFFER_1_HYPOTHESEN.md` through `SNIFFER_4_ERGEBNISSE.md`,
+  `SNIFFER_CAPTURE_VALIDATION.md`): a real bug (large mirrored frames
+  >1514 bytes wedging the PC's USB-Ethernet adapter/Npcap capture),
+  root-caused to something outside the bridge (PC/adapter/driver side,
+  not reproducible as a firmware bug), mitigated in `port_mirror.c` by
+  truncating every mirrored frame to `MIRROR_SAFE_FRAME_LEN` (1514) -
+  **already ported verbatim into this project** when `port_mirror.c` was
+  copied over. Asked whether to re-validate on this project's own bench.
+- Chose the thorough option: ported `scripts/iperf_matrix_test.py` and
+  `scripts/sniffer_capture_test.py` from the sister project, adapting
+  `DEVICES`/`BRIDGE_ETH0_IP`/`BRIDGE_ETH1_IP`/`PC_IP` to this project's
+  actual addresses (Bridge eth0 `192.168.0.11`/eth1 `192.168.0.12`,
+  confirmed live via `showenv`; PC `192.168.0.100` on "Ethernet 8",
+  confirmed via `Get-NetIPAddress`; `tshark -D` confirmed capture
+  interface index `2` is still "Ethernet 8" on this machine).
+- **Pre-flight check found a real, unrelated problem before running
+  anything:** `FollowerA` (COM10, one of the two shared T1S nodes on this
+  bench used by both projects) reported the exact same eth0 MAC
+  (`00:04:25:CA:CE:D9`) as this project's own Bridge. `env.c` derives the
+  eth0 MAC from the SAME54's factory-programmed 128-bit device serial
+  number (`env.c` line ~60-63) - collisions between two different chips
+  are practically impossible, so this had to be a stale, manually-set
+  `setenv mac0` value on `FollowerA` left over from earlier, unrelated
+  work (not something this session's changes could have caused, and nothing
+  wrong with the derivation scheme itself). Fixed directly on `FollowerA`
+  (COM10, with the user's explicit go-ahead): `setenv mac0
+  00:04:25:CA:CE:DB` + `saveenv` + `reset`, verified via `showenv`
+  afterward - clean, no collision anymore.
+- **Ran `sniffer_capture_test.py --udp-rate 10 --duration 5`**
+  (`FollowerA` COM10/`192.168.0.201` <-> `FollowerB` COM23/`192.168.0.202`,
+  Bridge COM8 as a passive `sniffer` tap, captures written to the
+  scratchpad, log appended to `docs/sniffer_capture_results.log`):
+  - UDP FollowerA->FollowerB: 3982 datagrams captured (3972 data + 10
+    end-of-stream markers) vs. 3981 expected (source-reported sent count)
+    - **COMPLETE**, every sequence id present, 0% loss per the
+    destination's own report (9.34 Mbit/s).
+  - TCP FollowerA->FollowerB: 3,595,990 bytes / 2485 segments captured vs.
+    ~3,616,875 expected - **COMPLETE** (99.4%, within tolerance).
+  - UDP FollowerB->FollowerA and TCP FollowerB->FollowerA: same results,
+    mirrored (**COMPLETE** both ways).
+  - Bridge's own mirror counters after the run: `rx_hook=18062
+    passed_filter=18002 tx_submitted=18002 ack_ok=18002 ack_fail=0
+    truncated=0 max_len_submitted=1504 max_len_ok=1504` - the 1514-byte
+    safety cap never triggered at this frame size, and every mirrored
+    frame the driver handed off was hardware-confirmed transmitted.
+- **A genuine anomaly found and NOT glossed over:** the script's own
+  frame-length sanity check (captured `frame.len` vs. what the packet's
+  own IP/UDP headers claim) flagged **all 3982 UDP datagrams in both
+  directions** as shorter than their headers claim - by exactly 10 bytes,
+  every single time (spot-checked directly:
+  `tshark -r ... -T fields -e frame.len -e ip.len -e udp.length` on
+  several frames all showed `frame.len=1502, ip.len=1498,
+  udp.length=1478` - `ip.len` and `udp.length` agree with each other
+  perfectly [`20 + 1478 = 1498`], but the actually-captured frame is only
+  `14 + 1488 = 1502` bytes, 10 bytes short of the `14 + ip.len = 1512`
+  the header implies). This did **not** show up in the sister project's
+  own validated runs (`SNIFFER_CAPTURE_VALIDATION.md` explicitly states
+  "None of the runs below triggered this"). Why it didn't corrupt the
+  completeness result: iperf's 4-byte UDP sequence id sits at the very
+  *start* of the payload, so a consistent 10-byte shortfall at the *end*
+  of every frame (landing inside the repetitive `0x55` filler payload
+  used by this synthetic test traffic) never touches the bytes the
+  completeness check actually reads.
+- **Not yet root-caused, but a strong, specific lead found** (user
+  recognized this as reminiscent of something in the sister project and
+  asked to check - `docs/FALLSTRICKE.md` 2026-08-27, ~line 761 onward):
+  the sister project root-caused a related bug where the LAN865x RX path
+  **violates the `tcpip_mac.h` contract** - the driver does not strip the
+  14-byte Ethernet header + 4-byte FCS from a received frame's
+  `pktLen`/`segLen` before handing it to the stack, as the contract
+  requires, making eth0 RX length **18 bytes larger** than the real
+  frame. That caused two bugs there: `tcpip_mac_bridge.c` wrongly
+  rejecting standard-size frames as over-MTU (`failMtu`), and copying 18
+  bytes too many into adjacent heap memory when forwarding
+  (`_MAC_Bridge_PacketCopy()`, `pktLen` used as the copy length from a
+  pointer that already skips the header). Both fixed there with
+  hand-patches to `tcpip_mac_bridge.c` (subtracting 18 from `pktLen` for
+  `inPort==0`/eth0) - **out of scope for this project's driver contract**,
+  a different, newer package version.
+  **The direction here is the opposite** (10 bytes *short*, not 18 bytes
+  *over*) but the mechanism this points to is the same suspect: this
+  project's `mirror_ethpkt_to_eth1()` copies exactly `flen` bytes from
+  `pMacLayer`, where `flen` is `MIRROR_Eth0Rx()`'s `rxPkt->pDSeg->segLen`
+  verbatim - if *this* (newer) package version's LAN865x driver
+  under-reports `segLen` by ~10 bytes for frames in this size class
+  (rather than over-reporting by 18, as the sister's older package
+  version did), the mirror copy would be truncated by exactly that much,
+  fully explaining every observation above: `truncated` stayed `0`
+  (`segLen` reads *under* the 1514 cap, not over it), the sequence id
+  (early in the payload) survived intact, and every frame in this size
+  class was affected identically (a systematic accounting offset, not
+  random loss).
+  **Confirmed directly, independently of the iperf/mirror test above**:
+  used this project's own `ipdump 1` (logs `rxPkt->pDSeg->segLen` for
+  every eth0 RX frame via `pktEth0Handler()`, no mirror/sniffer involved
+  at all) and inspected ordinary background traffic already present on
+  the shared T1S bus (PLCA-related multicast frames from the other nodes,
+  `dst=01:00:5e:00:00:01`). Every one of them: reported `len=88`
+  (`segLen`), but the frame's own IP header (`45 00 00 54 ...` at offset
+  +14) declares total IP length `0x0054` = 84 bytes, i.e. a true frame
+  length of `14 + 84 = 98` bytes - **exactly 10 bytes more than the
+  `segLen` this driver reports**, matching the UDP mirror-capture finding
+  precisely, on completely unrelated traffic. **This is no longer a
+  hypothesis: `rxPkt->pDSeg->segLen` on this project's eth0/LAN865x RX
+  path is confirmed systematically 10 bytes short of the true frame
+  length** (at least for frames in this size range) - very likely the
+  same class of `tcpip_mac.h` header/FCS-contract violation the sister
+  project found in its own (older) package version, just with a
+  different, not-yet-explained fixed offset in this (newer) one. Where
+  exactly the missing 10 bytes come from (which part of header/FCS
+  accounting) is still open - the next concrete step if this is picked
+  back up, rather than starting from scratch.
+- **Net assessment:** the mirror path's core guarantee - the mitigation
+  for the original large-frame PC-adapter-hang bug, and basic delivery
+  completeness (no missing sequence ids, correct TCP byte counts) - is
+  confirmed working on this project's own hardware, matching the sister
+  project's validated behavior. The 10-byte-per-frame anomaly is real,
+  reproducible, and currently unexplained - flagged here as an open item
+  for a focused follow-up (in the spirit of the sister project's own
+  SNIFFER_1-4 investigation) rather than either dismissed or allowed to
+  block reporting the otherwise-clean result.
+- Both ported scripts committed to this project's own `scripts/` folder
+  (`iperf_matrix_test.py`, `sniffer_capture_test.py`) for reuse in future
+  sessions; not yet committed to git (pending user confirmation, this
+  entry documents the run before that decision).
+
+### RX `segLen` root-cause attempt: escalated from "fixed offset" to "non-deterministic"
+
+- User asked to fix the confirmed `segLen`-short-by-10 finding. Static
+  comparison against the sister project's own working Bridge found
+  `tc6.c` (the OPEN Alliance TC6 SPI chunk protocol library) **byte-for-
+  byte identical** between the two projects (only a trivial, unrelated
+  init-style diff), and `drv_lan865x_api.c`'s `TC6_CB_OnRxEthernetSlice`/
+  `TC6_CB_OnRxEthernetPacket` **functionally identical** (only renamed
+  helper functions from the package-version API drift already documented
+  elsewhere in this log). `DRV_LAN865X_CHUNK_SIZE_IDX0` and RTS/timestamp
+  config also identical (`64`, no RX timestamping configured on either
+  project). Sender-side bug ruled out: `FollowerA`/`FollowerB` (COM10/
+  COM23) are the exact same physical boards already validated bug-free by
+  the sister project's own `sniffer_capture_test.py` runs.
+- With code and config identical on the suspect path, added temporary,
+  runtime-switchable diagnostic instrumentation (hand-patches, documented
+  exception, **to be removed once this is resolved**):
+  - `tc6.c`: a non-static `uint32_t g_tc6DiagEnable` flag (toggleable live
+    via `poke 0x2000b4e4 1/0`, address from the `.map` file after
+    building) gates a `SYS_CONSOLE_PRINT` in `process_rx()` printing every
+    RX chunk's `buf_len/sv/sbo/ev/ebo/mfd/twoFrames/offsetRx`.
+  - `drv_lan865x_api.c`: `TC6_CB_OnRxEthernetPacket()` gated on the same
+    flag, prints the final `len`/`segLen` plus the first 48 bytes of the
+    received frame's own content, so the chunk trace can be directly
+    correlated against the frame's own IP header.
+- **Captured the exact same periodic background message type (from
+  `FollowerB`/COM23, `8e:8c:a1`) at two different points in time and got
+  two different, contradictory results:**
+  - Earlier (`ipdump 1`, no chunk-level detail): `segLen=88` for a frame
+    whose own IP header declares `ip.len=84` (true frame `14+84=98`) -
+    **10 bytes short**.
+  - Just now (`g_tc6DiagEnable`, full chunk trace + payload dump): the
+    *same kind of message* (same sender, same IP total length `0x0054`
+    = 84, only the IP ID/checksum differ - a different instance of an
+    identical periodic transmission) produced `segLen=102` - **4 bytes
+    over**, not short. Chunk trace: chunk 1 `sv=1 ebo=64` (full 64-byte
+    chunk), chunk 2 `sv=0 ev=1 ebo=38` -> `tc6.c` correctly sums
+    `64 + 38 = 102`. The arithmetic itself is exactly right given its
+    inputs; if `102` is wrong, the LAN865x hardware itself reported an
+    incorrect `EBO` (End Byte Offset) footer value for that chunk, not a
+    software miscalculation.
+  - **This rules out a fixed, code-explainable offset.** The same message
+    type shows different, opposite-direction errors at different times -
+    consistent with a timing-/race-dependent hardware or SPI-protocol
+    issue, not a deterministic accounting bug reachable by reading source
+    code. This is the same general *category* of problem as the sister
+    project's own, only partially-resolved GMAC RX race condition
+    (`FALLSTRICKE.md`: "the race condition got smaller with each step
+    ... but not completely eliminated - there is apparently at least one
+    more, unfound unguarded access point") - not the same bug (different
+    peripheral, LAN865x/SPI here vs. GMAC there), but the same shape: an
+    intermittent, hardware-adjacent RX length inconsistency that resists
+    static code analysis and needs either statistical/timing-focused
+    runtime investigation or hardware-level tracing (e.g. a logic
+    analyzer on the SPI bus) to pin down conclusively.
+- **Diagnostic flag left in place but disabled** (`poke 0x2000b4e4 0`,
+  confirmed) so it does not flood the console during normal use; the
+  instrumentation itself (`g_tc6DiagEnable` in `tc6.c`, the gated block in
+  `drv_lan865x_api.c`) is still in the tree, ready to re-arm for a future
+  continuation of this investigation, and should be stripped out entirely
+  once this is either root-caused or the investigation is abandoned.
+- **Status: escalated, not fixed, and not safely patchable from what is
+  known so far.** Given the effort already invested and the apparent
+  depth (matching the sister project's own multi-day, only-partially-
+  successful hunt for a structurally similar RX race), continuing
+  requires either (a) many more correlated captures to find a pattern in
+  *when* the error occurs (load level? specific chunk boundary? timing
+  relative to other bus activity?), or (b) hardware-level tracing beyond
+  what this session's tooling can do. Reported to the user as-is rather
+  than attempting a guessed patch to genuinely non-deterministic,
+  hardware-adjacent behavior.
+
+### Real fix applied, following the sister project's own successful methodology
+
+- Asked the user how the sister project handled its own, structurally
+  similar non-deterministic RX issue (the GMAC RX race in
+  `FALLSTRICKE.md`). Their approach: (1) root-cause via **live memory
+  inspection during a reproduced failure**, not just counters; (2) found
+  the actual "lock" (`_DRV_GMAC_RxLock`/`Unlock`) was a **no-op** on this
+  RTOS-less build, so an interrupt could freely preempt a task-context
+  critical section; (3) real fix: make the lock a genuine
+  `SYS_INT_Disable()`/`SYS_INT_Restore()` critical section; (4) verify
+  with an escalating stress test, and (5) **honestly report the result
+  even if it's "improved, not eliminated."** Applied the same approach
+  here.
+- **Found the equivalent mechanism in the LAN865x/TC6 path:**
+  `_EventHandlerSPI()` (`drv_lan865x_api.c`) - the SPI transfer-complete
+  callback, invoked from a genuine hardware interrupt (SPI/DMA completion)
+  - calls `TC6_SpiBufferDone()` (`tc6.c`) with **no locking at all**.
+  Meanwhile `_Lock()`/`_Unlock()` (the only guard around task-context
+  `TC6_Service()`, which drives `process_rx()`/
+  `TC6_CB_OnRxEthernetSlice()` - the exact functions that accumulate
+  `g->offsetRx`/`macPkt->pDSeg->segLen`) turned out to wrap
+  `OSAL_MUTEX_Lock()`/`Unlock()`, whose bare-metal ("basic" OSAL)
+  implementation (`osal_impl_basic.h`) is a **plain flag check-and-clear**
+  - it does not touch `SYS_INT_Disable`/NVIC/PRIMASK at all. The SPI
+  completion interrupt can therefore freely preempt task-context RX chunk
+  processing at any point - the exact same *shape* of bug as the sister
+  project's GMAC race (a task-level "lock" that provides zero protection
+  against the actual racing ISR), just in a different peripheral/driver.
+- **Fix applied** (hand-patch to MCC-generated `drv_lan865x_api.c`,
+  documented exception per `CLAUDE.md` section 3 - `DRV_LAN865X_INSTANCES_
+  NUMBER == 1` in this project, confirmed via `configuration.h`, so a
+  single saved-interrupt-state variable is safe): `_Lock()`/`_Unlock()`
+  now also call `SYS_INT_Disable()`/`SYS_INT_Restore()` around the
+  existing mutex, turning the guard into a genuine interrupt-safe critical
+  section - the same mechanism as the sister project's fix, applied to
+  the equivalent point in this project's driver.
+- **Verified with the same runtime chunk-trace instrumentation, before
+  and after:**
+  - Before the fix: the *same* periodic background message (identical
+    sender, identical declared IP length) showed **88** and **102** bytes
+    of `segLen` at different points in time for a true-per-header length
+    of 98 - non-deterministic, opposite-direction errors.
+  - After the fix: the same message type showed **102** consistently
+    across every sample taken (multiple separate captures, no more
+    variance).
+  - Re-ran the full `sniffer_capture_test.py` UDP/TCP completeness
+    validation (both directions): still **COMPLETE** as before, and this
+    time checked the underlying raw numbers directly -
+    `frame.len=1502 ip.len=1498 udp.length=1478` for **all 3982** captured
+    iperf UDP datagrams, both directions, with **zero variance** (`tshark`
+    field extraction + `sort | uniq -c` showed exactly one distinct
+    combination across all 3982 rows). Before the fix this appeared
+    consistent too on a small sample, but the background-traffic evidence
+    above proves it wasn't reliably so - the same size class could plausibly
+    have shown the same kind of instability under different timing.
+- **What this fix demonstrably achieved: eliminated the non-deterministic/
+  racy component.** What it did **not** explain: a separate, now-provably
+  *consistent* ~10-byte-short discrepancy specific to ~1512-byte frames
+  (iperf UDP), and a consistent ~4-byte-over discrepancy for the ~98-byte
+  background message type - two different fixed offsets for two different
+  frame sizes, suggesting a genuine, deterministic, size-dependent
+  chunk-boundary accounting detail in `tc6.c` (unrelated to the interrupt
+  race just fixed) that has not been root-caused. An attempt to correlate
+  a specific, deliberately-sized (`noip_send 1 0 1512`) test frame against
+  the live chunk trace did not succeed - the frame confirmed sent by the
+  source (`FollowerA`, `seq=2`) never appeared in the bridge's RX
+  diagnostic window at all, a separate, likely PLCA-bus-related packet-loss
+  question outside this investigation's scope.
+- **Decision: stop here.** The interrupt-safety fix is a genuine,
+  well-evidenced correctness improvement (real bug, real mechanism, real
+  before/after verification) worth keeping regardless of the remaining
+  open question. The residual deterministic per-size offset is a smaller,
+  separate matter with no demonstrated functional impact (delivery
+  completeness has been proven intact throughout this entire
+  investigation - sequence ids, TCP byte counts) and diminishing returns
+  from further digging in this session. Diagnostic instrumentation
+  (`g_tc6DiagEnable` in `tc6.c`, the gated block in `drv_lan865x_api.c`)
+  remains in place but disabled - should be stripped out before any
+  release build, or re-armed if this is picked back up.
+
 ---
 
 <!-- Append new dated entries above this line as work continues. -->

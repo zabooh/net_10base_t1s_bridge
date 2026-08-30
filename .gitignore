@@ -1,5 +1,6 @@
 *.o
 *.elf
+__pycache__/
 *.map
 *.d
 *.log

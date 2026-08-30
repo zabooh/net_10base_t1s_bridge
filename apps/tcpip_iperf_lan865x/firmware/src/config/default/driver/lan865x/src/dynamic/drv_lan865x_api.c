@@ -1384,6 +1384,18 @@ void TC6_CB_OnRxEthernetPacket(TC6_t *pInst, bool success, uint16_t len, uint64_
             pDrvInst->rxStats.nRxErrorPackets++;
         } else {
             macPkt = pDrvInst->rxDescriptors.macPkt;
+            /* TEMP DIAG 2026-08-31 - remove after RX segLen root-cause (see docs/session-log.md) */
+            extern uint32_t g_tc6DiagEnable;
+            if (0u != g_tc6DiagEnable) {
+                uint16_t dbg_i;
+                uint16_t dbg_n = (macPkt->pDSeg->segLen < 48u) ? macPkt->pDSeg->segLen : 48u;
+                SYS_CONSOLE_PRINT("TC6DIAG packet done: len=%u segLen=%u data:", (unsigned)len,
+                    (unsigned)macPkt->pDSeg->segLen);
+                for (dbg_i = 0u; dbg_i < dbg_n; dbg_i++) {
+                    SYS_CONSOLE_PRINT(" %02x", (unsigned)macPkt->pDSeg->segLoad[dbg_i]);
+                }
+                SYS_CONSOLE_PRINT("\r\n");
+            }
             SYS_ASSERT(len == macPkt->pDSeg->segLen, "Invalid RX length");
             pDrvInst->rxDescriptors.macPkt = NULL;
             pDrvInst->rxStats.nRxPendBuffers++;
@@ -1511,9 +1523,33 @@ bool TC6_CB_OnSpiTransaction(uint8_t tc6instance, uint8_t *pTx, uint8_t *pRx, ui
 *  Local Function Implementations
 ******************************************************************************/
 
+/* HAND-PATCH to MCC-generated code, documented exception (CLAUDE.md section 3):
+ * OSAL_MUTEX_Lock()/Unlock() on this bare-metal ("basic") OSAL build
+ * (osal_impl_basic.h) are a plain flag check-and-clear - they do NOT disable
+ * interrupts, so they provide no protection against the SPI transfer-complete
+ * ISR (_EventHandlerSPI() -> TC6_SpiBufferDone(), see tc6.c) preempting
+ * task-context TC6_Service() mid-way through RX chunk processing
+ * (process_rx()/TC6_CB_OnRxEthernetSlice(), which accumulate frame state in
+ * shared TC6_t fields with no synchronization of their own). Root-caused
+ * 2026-08-31 (see docs/session-log.md) as the likely cause of an
+ * intermittent, non-deterministic RX segLen corruption (same periodic
+ * message observed both several bytes short and several bytes over,
+ * confirmed via runtime chunk-trace instrumentation) - the same class of
+ * bug (a task-level "lock" that does not actually block the racing ISR) the
+ * sister project (t1s_100baset_bridge) found and fixed for its own GMAC RX
+ * path, documented in its docs/FALLSTRICKE.md.
+ * DRV_LAN865X_INSTANCES_NUMBER == 1 in this project (see configuration.h) -
+ * a single saved-interrupt-state variable is safe as long as _Lock()/
+ * _Unlock() calls are not nested, which matches every call site in this
+ * file. Re-apply this whole function pair after any regenerate that
+ * touches this file. */
+static bool s_lockIntState = false;
+
 static inline void _Lock(OSAL_MUTEX_HANDLE_TYPE *drvMutex)
 {
-    OSAL_RESULT res = OSAL_MUTEX_Lock(drvMutex, OSAL_WAIT_FOREVER);
+    OSAL_RESULT res;
+    s_lockIntState = SYS_INT_Disable();
+    res = OSAL_MUTEX_Lock(drvMutex, OSAL_WAIT_FOREVER);
     (void)res;
     SYS_ASSERT(res == OSAL_RESULT_TRUE, "Could not lock the driver mutex");
 }
@@ -1523,7 +1559,7 @@ static inline void _Unlock(OSAL_MUTEX_HANDLE_TYPE *drvMutex)
     OSAL_RESULT res = OSAL_MUTEX_Unlock(drvMutex);
     (void)res;
     SYS_ASSERT(res == OSAL_RESULT_TRUE, "Could not unlock the driver mutex");
-
+    SYS_INT_Restore(s_lockIntState);
 }
 
 static void PrintRateLimited(const char *statement, ...)

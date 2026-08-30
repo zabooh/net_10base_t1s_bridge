@@ -228,6 +228,36 @@ cli.bat --port COM8 --read 3 "reset"
   der schon Paket-Handler-Registrierung und `env_apply()` auf einen laufenden Stack warten).
   Die anderen drei portierten Module (`lan865x_diag`/`noip_test`/`testserver`) registrieren in
   ihrer `_Initialize()` nur CLI-Kommandos (kein Heap-Zugriff) und sind davon nicht betroffen.
+- **LAN865x-RX-Pfad hatte eine echte Race Condition — gefixt 2026-08-31 (siehe
+  `docs/session-log.md` für die volle Herleitung).** Ursprünglicher Befund:
+  `rxPkt->pDSeg->segLen` wich vom im IP-Header deklarierten Gesamtlängenwert ab, und zwar
+  **nicht-deterministisch** — dieselbe periodische Nachricht zeigte zu unterschiedlichen
+  Zeitpunkten `88` und `102` Byte (wahre Länge: 98). Root Cause per derselben Methodik wie im
+  Schwesterprojekt gefunden (`FALLSTRICKE.md`, GMAC-RX-Race, 2026-08-27): `_Lock()`/`_Unlock()`
+  in `drv_lan865x_api.c` wickeln nur `OSAL_MUTEX_Lock/Unlock` ein, was auf diesem Bare-Metal-Build
+  (`osal_impl_basic.h`) **nur ein einfaches Flag ist, keine Interrupts sperrt** — der
+  SPI-Transfer-Complete-Callback `_EventHandlerSPI()` → `TC6_SpiBufferDone()` (läuft aus einem
+  echten Hardware-Interrupt) kann dadurch jederzeit mitten in die Task-Kontext-Verarbeitung von
+  `TC6_Service()`/`process_rx()` hineinfeuern — exakt dieselbe Fehlerklasse (task-lokales „Lock",
+  das die tatsächlich konkurrierende ISR nicht blockiert).
+  **Fix (dokumentierte Ausnahme, `DRV_LAN865X_INSTANCES_NUMBER==1` in diesem Projekt macht eine
+  einzelne gespeicherte Interrupt-State-Variable sicher):** `_Lock()`/`_Unlock()` rahmen jetzt
+  zusätzlich `SYS_INT_Disable()`/`SYS_INT_Restore()` — ein echter kritischer Abschnitt, wie im
+  Schwesterprojekt.
+  **Verifiziert:** nach dem Fix zeigte dieselbe Testnachricht über mehrere Stichproben hinweg
+  konstant `102` (keine Streuung mehr); der volle `sniffer_capture_test.py`-Vollständigkeitstest
+  zeigte für **alle 3982** iperf-UDP-Frames exakt dieselbe `frame.len/ip.len/udp.length`-Kombination
+  (0 Varianz) — die nicht-deterministische Komponente ist nachweislich behoben.
+  **Weiterhin offen (kleiner, aber jetzt deterministischer Rest):** ein fester, größenabhängiger
+  Offset bleibt bestehen (~1512-Byte-Frames: konstant 10 Byte zu wenig; ~98-Byte-Frames: konstant
+  4 Byte zu viel) — vermutlich eine separate, noch nicht root-gecausete Chunk-Grenzen-Eigenheit in
+  `tc6.c`, unabhängig von der jetzt gefixten Race Condition. Kein bekannter Funktionsschaden
+  (Datenvollständigkeit durchgehend bestätigt). Noch nicht geprüft, ob die normale Bridge-
+  Weiterleitung (`tcpip_mac_bridge.c`) davon betroffen ist.
+  **Temporäre Diagnose-Instrumentierung** (`g_tc6DiagEnable`-Flag in `tc6.c`, per
+  `poke <addr> 1/0` schaltbar, gated `SYS_CONSOLE_PRINT` in `process_rx()`/
+  `TC6_CB_OnRxEthernetPacket()`) ist noch im Code, aktuell deaktiviert — vor einem Release-Build
+  entfernen oder bei Fortsetzung der Untersuchung wieder verwenden.
 
 ---
 

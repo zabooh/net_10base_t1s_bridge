@@ -46,6 +46,13 @@ Microchip or any third party.
 #include "tc6.h"
 #include "tc6-queue.h"
 #include "driver/lan865x/src/dynamic/drv_lan865x_local.h"
+#include "system/console/sys_console.h"  /* TEMP DIAG 2026-08-31 - remove after RX segLen root-cause */
+
+/* TEMP DIAG 2026-08-31 - remove after RX segLen root-cause (see docs/session-log.md).
+ * Not static, not const: toggled at runtime via the CLI 'poke' command so the
+ * trace can be armed right before a known test frame, instead of being buried
+ * under continuous background T1S traffic. */
+uint32_t g_tc6DiagEnable = 0u;
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>*/
 /*                          USER ADJUSTABLE                             */
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>*/
@@ -1196,6 +1203,14 @@ static inline void process_rx(TC6_t *g, const uint8_t *buff, uint16_t buf_len)
 
         mfd = GET_VAL(FTR_FD, fptr);
         twoFrames = (ebo <= sbo);
+
+        /* TEMP DIAG 2026-08-31 - remove after RX segLen root-cause (see docs/session-log.md) */
+        if (0u != g_tc6DiagEnable) {
+            SYS_CONSOLE_PRINT("TC6DIAG chunk: buf_len=%u sv=%u sbo=%u ev=%u ebo=%u mfd=%u "
+                "twoFrames=%u offsetRx=%u\r\n",
+                (unsigned)buf_len, (unsigned)sv, (unsigned)sbo, (unsigned)ev, (unsigned)ebo,
+                (unsigned)mfd, (unsigned)twoFrames, (unsigned)g->offsetRx);
+        }
 
         if (twoFrames) {
             /* Two ETH frames in chunk */
