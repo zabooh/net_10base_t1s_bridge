@@ -10,6 +10,12 @@ Files outside `config\default\` (`app.c`/`.h`, `env.c/h`, `lan865x_diag.c/h`,
 `port_mirror.c/h`, `noip_test.c/h`, `testserver.c/h`, everything in `docs\`, `scripts\`)
 are plain user files MCC never touches — not covered here, nothing to re-apply.
 
+**Don't re-apply these by hand if you don't have to:** `patches\apply_patches.py`
+automates everything below — run `python patches\apply_patches.py --check` after any
+`Generate Code` run for a report, or without `--check` to fix whatever it finds
+missing. See `patches\README.md` for how it works and how to regenerate a patch file
+if a hand-patch itself changes.
+
 **How to find these again by hand:** every real patch below is marked in the source
 with a `HAND-PATCH to MCC-generated code, documented exception (CLAUDE.md section 3)`
 comment. The two temporary diagnostic blocks are marked `TEMP DIAG` instead (see

@@ -1466,6 +1466,33 @@ completed step — do not wait until the end of the session.
   Also confirmed a normal boot with `sniffer` persisted OFF still works
   exactly as before (no regression) - `showenv`/`stats` both clean.
 
+### Automated hand-patch re-apply tool (`patches/apply_patches.py`)
+
+- Followed up on `docs/mcc-generated-code-patches.md` with automation: user asked
+  whether a Python script could guarantee the hand-patches survive a `Generate Code`
+  run, agreed on a git-patch-based design (fails loudly on mismatch instead of
+  guessing), then asked for everything under one `patches/` subfolder.
+- Built `patches/*.patch` (one unified diff per MCC-generated file, generated via
+  `git diff <clean-baseline-commit> HEAD -- <file>` against the last commit where
+  each file was still pristine MCC output - not hand-typed) plus
+  `patches/apply_patches.py` (tries a clean `git apply`; if that fails, checks
+  whether it's already applied via a reverse-apply check; reports `FAILED` only if
+  neither works) and `patches/README.md`. The two recurring `#include <stdarg.h>`
+  regressions are handled separately as a plain idempotent text check-and-insert,
+  since no clean git baseline exists for either occurrence (already baked into the
+  oldest available commit for both files). The temporary `tc6.c`/`drv_lan865x_api.c`
+  diagnostic instrumentation is deliberately excluded - meant to be deleted, not
+  preserved.
+- **Verified end-to-end**, not just unit-tested: reverted all 4 git-diff-covered
+  files plus both `stdarg.h` occurrences to their exact pre-patch (pristine MCC)
+  content using `git show <baseline-commit>:<path>`, confirmed `git status` showed
+  the expected 5 files modified, ran `apply_patches.py` for real, then diffed the
+  result against the real committed `HEAD` state: **3 of 4 files came back byte-
+  identical, the fourth (`drv_lan865x_api.c`) differed only by the intentionally-
+  excluded `TEMP DIAG` block** - exactly the expected outcome. Restored the real
+  files afterward (`git checkout HEAD --`), confirmed `apply_patches.py --check`
+  reports all six items `OK` again and `git status` is clean.
+
 ---
 
 <!-- Append new dated entries above this line as work continues. -->
