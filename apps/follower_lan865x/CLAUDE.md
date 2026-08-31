@@ -40,10 +40,43 @@ cli.bat "help"             :: Kommando über die serielle Konsole schicken
   `apps\bridge_lan865x_100baseT\batch\genmk.bat` (dort am 2026-08-31 gegen eine hartcodierte
   Versionsliste gefixt, die eine neuere installierte Version übersehen hätte — Details dort).
 - **Board-Zuordnung auf dieser Werkbank** (aus `apps\bridge_lan865x_100baseT\scripts\iperf_matrix_test.py`):
-  Follower A = `COM10` / `192.168.0.201`, Follower B = `COM23` / `192.168.0.202` — diese beiden
-  physischen Boards liefen bisher mit Firmware, die über das Schwesterprojekt geflasht wurde;
-  dieses Projekt hier bringt jetzt den Quellcode mit, ersetzt aber noch nicht automatisch, was auf
-  den Boards läuft (`flash.bat` erst nach Bedarf ausführen, nicht proaktiv).
+  Follower A = `COM10` / `192.168.0.201`, Follower B = `COM23` / `192.168.0.202`. Beide liefen
+  ursprünglich mit Firmware, die über das Schwesterprojekt geflasht wurde. **Seit 2026-08-31 läuft
+  auf Follower B die hier gebaute `follower_lan865x`-Firmware** (erster Flash dieses Ports
+  überhaupt, siehe Eintrag unten); Follower A läuft weiterhin mit der alten, unverändert
+  funktionierenden Firmware.
+
+## Bekannter, noch offener Fehler: TCP/ICMP-Pakete von diesem Follower selbst kaputt
+
+**2026-08-31, gefunden, noch nicht behoben (auf User-Wunsch zurückgestellt — Fokus lag auf der
+Bridge).** Sowohl Follower A (alte Firmware) als auch Follower B (diese portierte Firmware, mit
+und ohne den `_Lock`/`_Unlock`-Fix unten) senden fehlerhafte ausgehende Pakete: ein per `ping`
+abgesetzter ICMP-Echo-Request hatte am PC-NIC (Wireshark-Mitschnitt) `IP Total Length: 128`, real
+aber nur 114 Byte vorhanden — Differenz exakt 14 Byte. Ein TCP-SYN (`iperf -c`) zeigte noch
+Schwereres: nur die ersten 8 Byte des TCP-Headers (Ports + Sequenznummer) gültig, die restlichen
+16 Byte (Ack, Flags, Fenster, Prüfsumme, Optionen) komplett Null — der Handshake kam gar nicht
+zustande. **Per Isolationstest bestätigt: unabhängig vom `_Lock`/`_Unlock`-Fix** (identischer
+Fehler mit zurückgenommenem Fix reproduziert) **und unabhängig von der Bridge** (identischer
+Fehler auf Follower A, deren Firmware nie angefasst wurde) — der Fehler liegt im eigenen
+TX-/ICMP-Pfad dieser Follower-Codebasis selbst, vermutlich nie zuvor auf echter Hardware
+verifiziert. Noch nicht root-gecauset. Bei nächster Gelegenheit: gleiche Methode wie beim
+Bridge-Fix in `apps\bridge_lan865x_100baseT\docs\mcc-generated-code-patches.md` Punkt 9 — Werte
+per `SYS_CONSOLE_PRINT` an der Paket-Konstruktionsstelle gegen einen Wireshark-Mitschnitt
+desselben Pakets korrelieren, nicht vom Schwesterprojekt übernehmen ohne Gegenprüfung (genau das
+ist beim ersten Bridge-Fixversuch schiefgegangen).
+
+## LAN865x-Treiber-Race gefixt (`_Lock`/`_Unlock`)
+
+**2026-08-31.** Wie in `apps\bridge_lan865x_100baseT\docs\mcc-generated-code-patches.md` Punkt 2
+dokumentiert, aber hier nie portiert: `_Lock()`/`_Unlock()` in `drv_lan865x_api.c` wickelten nur
+`OSAL_MUTEX_Lock/Unlock` ein — auf diesem Bare-Metal-OSAL-Build (`osal_impl_basic.h`) nur ein
+einfaches Flag, keine echte Sperre. Der SPI-Transfer-Complete-Callback (`_EventHandlerSPI()` →
+`TC6_SpiBufferDone()`, echter Hardware-Interrupt) konnte dadurch jederzeit mitten in
+`TC6_Service()` hineinfeuern — dieselbe Fehlerklasse wie die RX-Race in der Bridge, hier aber auf
+der TX-Credit-Seite (`g->txc`). **Fix identisch zur Bridge übernommen:** `_Lock`/`_Unlock` rahmen
+jetzt zusätzlich `SYS_INT_Disable()`/`SYS_INT_Restore()`. Kein `.patch`-Tracking nötig (dieses
+Projekt hat kein MCC-Modell, der Code wird nie regeneriert) — die Änderung steht direkt und
+dauerhaft im Quelltext, mit `HAND-PATCH`-Kommentar zur Herkunft.
 - **`build.bat` kopiert das Hex nach jedem erfolgreichen Build zusätzlich nach
   `release\T1S_Follower.hex`** (seit 2026-08-31, wie im Schwesterprojekt, dort eingecheckt —
   damit ein frischer Klon flashen kann, ohne vorher zu bauen). **Nur `build.bat` aktualisiert

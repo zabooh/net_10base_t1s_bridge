@@ -1483,9 +1483,21 @@ bool TC6_CB_OnSpiTransaction(uint8_t tc6instance, uint8_t *pTx, uint8_t *pRx, ui
 *  Local Function Implementations
 ******************************************************************************/
 
+/* HAND-PATCH to MCC-generated code, documented exception (CLAUDE.md) - ported
+ * from apps/bridge_lan865x_100baseT's own fix (docs/mcc-generated-code-patches.md
+ * item 2): OSAL_MUTEX_Lock/Unlock alone is not interrupt-safe on this bare-metal
+ * OSAL build ("basic" impl - a plain flag, not a real lock), so the SPI
+ * transfer-complete callback (_EventHandlerSPI() -> TC6_SpiBufferDone(), a genuine
+ * hardware interrupt) could preempt task-context TC6_Service() at any point.
+ * DRV_LAN865X_INSTANCES_NUMBER == 1 here too, so one saved-state variable is safe -
+ * none of the _Lock/_Unlock call sites in this file nest. */
+static bool s_lockIntState = false;
+
 static inline void _Lock(OSAL_MUTEX_HANDLE_TYPE *drvMutex)
 {
-    OSAL_RESULT res = OSAL_MUTEX_Lock(drvMutex, OSAL_WAIT_FOREVER);
+    OSAL_RESULT res;
+    s_lockIntState = SYS_INT_Disable();
+    res = OSAL_MUTEX_Lock(drvMutex, OSAL_WAIT_FOREVER);
     (void)res;
     SYS_ASSERT(res == OSAL_RESULT_TRUE, "Could not lock the driver mutex");
 }
@@ -1495,7 +1507,7 @@ static inline void _Unlock(OSAL_MUTEX_HANDLE_TYPE *drvMutex)
     OSAL_RESULT res = OSAL_MUTEX_Unlock(drvMutex);
     (void)res;
     SYS_ASSERT(res == OSAL_RESULT_TRUE, "Could not unlock the driver mutex");
-
+    SYS_INT_Restore(s_lockIntState);
 }
 
 static void PrintRateLimited(const char *statement, ...)
