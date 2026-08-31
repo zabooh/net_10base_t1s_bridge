@@ -682,13 +682,22 @@ class BridgeGUI:
             return {}
         if not identity:
             return next(iter(envs.values()))
-        found_id = identity.get("eeprom_id")
-        found_ver = str(identity.get("eeprom_version"))
-        for env in envs.values():
-            if str(env.get("version")) != found_ver:
-                continue
-            if found_id == env.get("id") or found_id in env.get("accepts_ids", []):
-                return env
+        # Match on the FIRMWARE's own identity, not the stored EEPROM record's: showenv
+        # always prints the value lines from its own current struct (the loaded record if
+        # valid, the compiled defaults otherwise) - never raw bytes in a foreign layout.
+        # firmware_id/version therefore always describes what layout those lines are in,
+        # while eeprom_id/version/crc is purely "what was found at boot" diagnostic info.
+        # Keying on eeprom_id instead would refuse to interpret a perfectly valid set of
+        # values whenever the stored record is blank/corrupt (e.g. a freshly erased chip
+        # after a full MPLAB X program) - exactly the case "Write Environment" exists to fix.
+        for found_id, found_ver in (
+                (identity.get("firmware_id"), str(identity.get("firmware_version"))),
+                (identity.get("eeprom_id"), str(identity.get("eeprom_version")))):
+            for env in envs.values():
+                if str(env.get("version")) != found_ver:
+                    continue
+                if found_id == env.get("id") or found_id in env.get("accepts_ids", []):
+                    return env
         return {}
 
     def env_entry(self) -> dict:
@@ -703,18 +712,7 @@ class BridgeGUI:
         if not envs:
             return {}
         if self.env_identity:
-            found_id = self.env_identity.get("eeprom_id")
-            found_ver = str(self.env_identity.get("eeprom_version"))
-            for env in envs.values():
-                if str(env.get("version")) != found_ver:
-                    continue
-                # 'accepts_ids' sind Alt-Kennungen, die die FIRMWARE noch liest. Fehlten sie
-                # hier, waere die GUI strenger als das Geraet: sie meldete ein unbekanntes
-                # Environment, waehrend die Firmware denselben Datensatz laengst akzeptiert
-                # und gueltige Werte liefert.
-                if found_id == env.get("id") or found_id in env.get("accepts_ids", []):
-                    return env
-            return {}
+            return self.env_entry_for(self.env_identity)
         return next(iter(envs.values()))
 
     def env_identity_label_color(self, ok: bool) -> None:
@@ -736,15 +734,24 @@ class BridgeGUI:
         crc = ident.get("eeprom_crc", "?")
         entry = self.env_entry()
         if entry:
-            if ident.get("eeprom_id") == ident.get("firmware_id"):
+            if ident.get("eeprom_id") == ident.get("firmware_id") and crc == "ok":
                 note = "model fits"
-            else:
+            elif crc == "ok":
                 # Kein Fehler: die Firmware liest diese Alt-Kennung noch und hat den
                 # Datensatz angenommen -- sonst gaebe es hier keinen Modelleintrag. Beim
                 # naechsten saveenv schreibt sie ihn mit der neuen Kennung zurueck.
                 note = (f"legacy id, accepted by the firmware - the next "
                         f"'{entry.get('commands', {}).get('persist', 'saveenv')}' "
                         f"rewrites it as {ident.get('firmware_id')}")
+            else:
+                # No record the firmware trusts was found at boot (blank/erased EEPROM -
+                # e.g. right after a full chip program - or a foreign/corrupt record), so
+                # it fell back to its compiled defaults. Those defaults ARE in this
+                # firmware's own current layout, so the values below are still real and
+                # safe to read/write - only 'Write Environment' + saveenv is missing to
+                # make them survive a reset.
+                note = ("no valid record found at boot - showing the firmware's compiled "
+                        "defaults. 'Write Environment' persists them.")
             return (f"Environment: EEPROM {ee} (crc {crc}) | Firmware {fw} "
                     f"{ident.get('firmware_variant', '')} - {note}")
         return (f"WARNING: the EEPROM reports {ee}, which this tool has no model for. "
