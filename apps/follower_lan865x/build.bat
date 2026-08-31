@@ -1,0 +1,111 @@
+@echo off
+setlocal EnableDelayedExpansion
+
+:: ===========================================================================
+:: build.bat - Shell build for the T1S follower endpoint firmware
+:: (T1S_Follower.X, PTP-over-10BASE-T1S timing follower, single interface).
+::
+:: Ported from the sister project t1s_100baset_bridge's follower\build.bat.
+:: Drives MPLAB X's own generated NetBeans-style Makefile
+:: (nbproject\Makefile-impl.mk etc.) via MPLAB X's bundled 'make', the same
+:: mechanism the IDE itself uses. Unlike the sister's follower\build.bat,
+:: this one is self-contained: no ..\.venv, ..\setup_compiler.config, or
+:: ..\scripts\build_summary.py/cli_doc_check.py - own .venv, no compiler
+:: auto-selection step, no build summary (same simplification already made
+:: for the bridge_lan865x_100baseT project in this repo).
+::
+:: This project has NO MCC model by design - see
+:: firmware\T1S_Follower.X\KEIN_MCC_MODELL.md. Build entirely from the
+:: tracked nbproject\configurations.xml; never run MCC "Generate Code"
+:: against firmware\src\config\default\ here.
+::
+:: Usage:
+::     build.bat [incremental|clean|rebuild|help]
+::     flash.bat
+:: ===========================================================================
+
+set "SCRIPT_DIR=%~dp0"
+set "MPLAB_DIR=%SCRIPT_DIR%firmware\T1S_Follower.X"
+set "PROJ_NAME=T1S_Follower"
+set "CONF=default"
+set "TYPE_IMAGE=PRODUCTION"
+set "DIST_DIR=%MPLAB_DIR%\dist\%CONF%\production"
+set "ELF_PATH=%DIST_DIR%\%PROJ_NAME%.X.production.elf"
+set "HEX_PATH=%DIST_DIR%\%PROJ_NAME%.X.production.hex"
+set "MPLABX_MAKE="
+for /f "delims=" %%D in ('dir /b /ad /o-n "C:\Program Files\Microchip\MPLABX\v*" 2^>nul') do (
+    if not defined MPLABX_MAKE if exist "C:\Program Files\Microchip\MPLABX\%%D\gnuBins\GnuWin32\bin\make.exe" (
+        set "MPLABX_MAKE=C:\Program Files\Microchip\MPLABX\%%D\gnuBins\GnuWin32\bin\make.exe"
+    )
+)
+
+if not defined MPLABX_MAKE (
+    echo ERROR: Could not find MPLAB X's bundled make.exe under
+    echo        C:\Program Files\Microchip\MPLABX\v*\gnuBins\GnuWin32\bin\
+    echo        Install MPLAB X IDE.
+    exit /b 1
+)
+echo Make      : %MPLABX_MAKE%
+
+rem Parallel compile: the per-configuration makefile inherits the jobserver
+rem via ${MAKE}, so compile rules run concurrently. -Otarget keeps each
+rem compiler's output together.
+if not defined BUILD_JOBS set "BUILD_JOBS=%NUMBER_OF_PROCESSORS%"
+if not defined BUILD_JOBS set "BUILD_JOBS=1"
+set "MAKE_PARALLEL=-j%BUILD_JOBS% -Otarget"
+echo Jobs      : %BUILD_JOBS% parallel ^(override with BUILD_JOBS=n^)
+
+rem NOTE: deliberately NOT passing MP_CC_DIR/MP_CC_TYPE_IMAGE on the command
+rem line - nbproject\Makefile-local-default.mk (written by MPLAB X itself)
+rem already has the correct absolute compiler path. A command-line override -
+rem even blank - takes precedence and silently breaks xc32-bin2hex (link
+rem succeeds, then "file not found").
+
+set "MODE=incremental"
+if not "%~1"=="" set "MODE=%~1"
+if /i "%MODE%"=="help"        goto :help
+if /i "%MODE%"=="clean"       goto :clean
+if /i "%MODE%"=="rebuild"     goto :rebuild
+if /i "%MODE%"=="incremental" goto :incremental
+echo ERROR: Unknown parameter "%~1"
+goto :help
+
+:help
+echo Usage: build.bat [incremental^|clean^|rebuild^|help]
+echo   (no argument)  Incremental build (default)
+echo   clean          Delete all build artifacts for this configuration
+echo   rebuild        Clean then perform a full build
+echo.
+echo Environment:
+echo   BUILD_JOBS=n   Parallel compile jobs (default: NUMBER_OF_PROCESSORS = %NUMBER_OF_PROCESSORS%).
+echo                  Use BUILD_JOBS=1 to reproduce a build failure serially.
+exit /b 0
+
+:clean
+echo Cleaning (make clean, CONF=%CONF%)...
+pushd "%MPLAB_DIR%"
+"%MPLABX_MAKE%" -f Makefile CONF=%CONF% TYPE_IMAGE=%TYPE_IMAGE% clean
+popd
+exit /b 0
+
+:rebuild
+call :clean
+goto :build
+
+:incremental
+:build
+echo [1/1] Building (make, CONF=%CONF%, TYPE_IMAGE=%TYPE_IMAGE%, %BUILD_JOBS% jobs)...
+pushd "%MPLAB_DIR%"
+"%MPLABX_MAKE%" -f Makefile CONF=%CONF% TYPE_IMAGE=%TYPE_IMAGE% %MAKE_PARALLEL% build
+set "BUILD_RC=%errorlevel%"
+popd
+if not "%BUILD_RC%"=="0" ( echo ERROR: Build failed. & exit /b 1 )
+
+echo.
+echo BUILD SUCCESSFUL.
+if exist "%HEX_PATH%" (
+    echo HEX: %HEX_PATH%
+) else (
+    echo WARNING: expected HEX not found at %HEX_PATH%
+)
+endlocal
