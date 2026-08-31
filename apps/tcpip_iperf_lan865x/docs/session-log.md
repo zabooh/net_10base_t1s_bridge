@@ -1850,6 +1850,64 @@ completed step — do not wait until the end of the session.
   *both* the read and the write to preserve whatever line endings were
   already there.
 
+### Fixed "dump" command output truncating/corrupting on larger sizes - a regression from the console-routing fix
+
+- User reported the "dump" command's output looked truncated with larger byte
+  counts (their own example: 500 bytes), both over Telnet and, once checked
+  directly, over the serial console too. Asked to find a good middle-ground
+  Telnet TX buffer size by testing empirically with `dump` (size fully
+  user-controlled) and `netinfo`.
+- Buffer-size sweep (`TCPIP_TELNET_SKT_TX_BUFF_SIZE`, MCC field, was `0` =
+  framework default) against `dump 200/500/800` and `netinfo` over a real
+  Telnet session: 0 truncated even 200 bytes; 2048 covered 200 but not
+  500/800; 3072 covered 200 and the user's own 500-byte case completely, not
+  800; 4096 covered all three but left only ~720 bytes as the largest free
+  TCP/IP heap block after a connect/dump/disconnect cycle (measured with a
+  consistent methodology: same test script, `meminfo` right after) - too
+  tight given this project's own history of heap-exhaustion bugs. **Settled
+  on 3072** as the reasonable middle ground (dump up to ~500 bytes and every
+  normal command fits; heap headroom stays meaningfully better than at 4096).
+  Separately noted, independent of buffer size: heap free after one Telnet
+  connect/dump/disconnect cycle dropped from ~17 KB (fresh boot) to ~3.8 KB
+  and stayed fragmented (largest block only ~1.6 KB even though ~3.8 KB was
+  nominally free) - flagged as a follow-up, not investigated further here.
+- **While reproducing this, found the real bug was a self-inflicted
+  regression, not (only) a buffer-size question.** A raw serial-console dump
+  of 500 bytes (`cli.bat --read 3 "dump 0x20000000 500"`) showed the SAME
+  problem, but worse than truncation: the output turned into **garbled,
+  interleaved bytes** partway through (`"...2002020020020200202..."`), not a
+  clean cutoff. Traced it to the earlier Telnet console-routing fix
+  (`CMD_PRINT`, same session, `9b8aa63`): splitting `DumpMem()` into a
+  `pCmdIO`-aware `CmdDumpMem()` for the actual "dump" command dropped its
+  flow control entirely - the original `DumpMem()`'s
+  `SYS_CONSOLE_WriteFreeBufferCountGet()` busy-wait (needed because
+  `SERCOM1_USART_Write()`, `plib_sercom1_usart.c`, silently drops whatever
+  does not fit in the 1024-byte serial TX ring buffer once it is full,
+  returning fewer bytes than requested with nobody checking) never made it
+  into the new function. `CmdDumpMem()` printed lines back-to-back with zero
+  pacing, at CPU speed, far outrunning both the serial UART (115200 baud)
+  and, over Telnet, `F_Telnet_MSG()` (same fire-and-forget pattern -
+  `NET_PRES_SocketWrite()`'s return value is discarded too, see
+  `telnet.c`).
+- **Fix**: `SYS_CONSOLE_WriteFreeBufferCountGet()` is serial-specific and the
+  generic `SYS_CMD_API` (`pCmdIO`) that also has to serve a Telnet
+  connection has no equivalent "how much room is left" query for either
+  transport - so instead of measuring free space, added a fixed per-line
+  pacing delay (`app_wait_ms()`, same shape as `noip_test.c`'s
+  `noip_wait_ms()`) after each `CMD_PRINT()` call in `CmdDumpMem()`. Started
+  at 3 ms - still corrupted, just later (line ~23 instead of ~13) - so it
+  was a margin problem, not a structural one; **10 ms** eliminated the
+  corruption entirely, both over serial and Telnet.
+- **Verified**: serial `dump 0x20000000 800` now ends cleanly and completely
+  at `20000310: ... (800 bytes exactly)`, no corruption; `dump 500` ditto.
+  Over Telnet with the 10 ms fix in place, `dump 500` (fits the 3072-byte
+  buffer) arrives complete, and `dump 800` (does not fit) now truncates
+  **cleanly** at the buffer boundary instead of garbling - confirming the
+  corruption was specifically the missing pacing, and the remaining
+  buffer-size-driven truncation for very large requests is the separate,
+  already-understood, lower-severity limitation from the buffer-size sweep
+  above.
+
 ---
 
 <!-- Append new dated entries above this line as work continues. -->

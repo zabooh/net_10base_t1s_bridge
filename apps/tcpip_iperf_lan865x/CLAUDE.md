@@ -271,6 +271,37 @@ cli.bat --port COM8 --read 3 "reset"
   **Verifiziert** über echten Telnet-Socket: `showenv`/`stats`/`meminfo`/`mirror`/
   `lanhelp` UND die beiden asynchronen Fälle `lan_read`/`plca_stat` (inkl. verketteter
   RMW+Multi-Step-Read-Sequenz) liefern jetzt korrekt über Telnet.
+- **Telnet-Ausgabepuffer zu klein für größere Kommando-Ausgaben (z. B. `dump`/`netinfo`)
+  — 2026-08-31, echtes MCC-Konfigurationsfeld, kein Hand-Patch.**
+  `TCPIP_TELNET_SKT_TX_BUFF_SIZE` stand auf `0` (= Framework-Default), spürbar zu klein
+  (`F_Telnet_MSG()` in `telnet.c` verwirft den Rückgabewert von `NET_PRES_SocketWrite()`
+  — was nicht in den Puffer passt, geht kommentarlos verloren). Testreihe mit
+  `dump <addr> <größe>` (Größe frei wählbar) plus `netinfo` über echten Telnet-Socket:
+  0 schneidet schon bei 200 Byte ab; 2048 deckt 200, nicht 500/800; **3072 deckt 200 und
+  500 vollständig** (nicht 800); 4096 deckt alle drei, drückt den größten freien
+  TCP/IP-Heap-Block nach einem Connect/Dump/Disconnect-Zyklus aber auf nur ~720 Byte —
+  angesichts früherer Heap-Erschöpfungs-Bugs in diesem Projekt zu knapp. **Auf 3072
+  gesetzt** als Mittelweg (aktuell Hand-Edit in `configuration.h` für die Testreihe —
+  muss vor dem nächsten Generate Code auch über MCCs Telnet-Server-Komponente
+  gesetzt werden, sonst fällt es beim Regenerieren still auf 0 zurück). Nebenbefund,
+  unabhängig von der Puffergröße: der freie TCP/IP-Heap sinkt nach einer einzigen
+  Telnet-Verbindung von ~17 KB (frischer Boot) auf ~3,8 KB und bleibt fragmentiert
+  (größter Block nur ~1,6 KB) — noch nicht weiter untersucht.
+- **`dump` bei größeren Byte-Zahlen (z. B. 500) lieferte kaputte/korrumpierte Ausgabe —
+  Eigenverschulden aus dem obigen Fix, behoben 2026-08-31.** Beim Aufspalten von
+  `DumpMem()` in eine `pCmdIO`-fähige `CmdDumpMem()` (für den `dump`-Befehl) ging der
+  Busy-Wait-Schutz des Originals verloren (`SYS_CONSOLE_WriteFreeBufferCountGet()`,
+  seriell-spezifisch — für Telnet gibt es dafür keine Entsprechung über `pCmdIO`).
+  `CmdDumpMem()` druckte Zeilen ungebremst in CPU-Geschwindigkeit, überholte damit
+  sowohl den seriellen 1024-Byte-Ringpuffer (`SERCOM1_USART_Write()` verwirft still,
+  was nicht passt) als auch Telnets `F_Telnet_MSG()` (verwirft `NET_PRES_SocketWrite()`s
+  Rückgabewert ebenso) — Resultat: nicht nur Abschnitt, sondern **korrumpierte,
+  ineinander verschachtelte Bytes** mitten in der Ausgabe. **Fix:** feste Pacing-Pause
+  (`app_wait_ms()`) nach jeder gedruckten Zeile statt einer Freiraum-Messung — 3 ms
+  reichte noch nicht (Korruption nur später), **10 ms** behebt es vollständig, seriell
+  wie über Telnet. **Verifiziert:** `dump 0x20000000 800` seriell jetzt exakt komplett
+  und sauber; über Telnet schneidet ein zu großer Dump jetzt nur noch sauber an der
+  Puffergrenze ab (siehe `TCPIP_TELNET_SKT_TX_BUFF_SIZE` oben), keine Korruption mehr.
 - **LAN865x-RX-Pfad hatte eine echte Race Condition — gefixt 2026-08-31 (siehe
   `docs/session-log.md` für die volle Herleitung).** Ursprünglicher Befund:
   `rxPkt->pDSeg->segLen` wich vom im IP-Header deklarierten Gesamtlängenwert ab, und zwar
