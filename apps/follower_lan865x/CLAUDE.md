@@ -48,7 +48,8 @@ cli.bat "help"             :: Kommando über die serielle Konsole schicken
   `release\T1S_Follower.hex`** (seit 2026-08-31, wie im Schwesterprojekt, dort eingecheckt —
   damit ein frischer Klon flashen kann, ohne vorher zu bauen). **Nur `build.bat` aktualisiert
   diese Kopie** — ein Build direkt aus der MPLAB-X-IDE lässt `release\` veraltet stehen.
-  `flash.bat` flasht standardmäßig weiterhin aus `dist\`, nicht aus `release\` — Pfad explizit
-  angeben (`flash.bat release\T1S_Follower.hex`), um die eingecheckte Version zu flashen.
+  **`flash.bat` flasht standardmäßig genau diese `release\`-Datei** (seit 2026-08-31, vorher
+  `dist\`) — um stattdessen einen frischen lokalen Build zu flashen, den `dist\`-Pfad explizit
+  angeben: `flash.bat firmware\T1S_Follower.X\dist\default\production\T1S_Follower.X.production.hex`.
 - Sonst gilt dieselbe Arbeitsweise wie im Schwesterprojekt: Build in MPLAB X durch den User
   selbst, nicht proaktiv `build.bat`/`flash.bat` aufrufen, um etwas „zu beweisen".
