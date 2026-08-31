@@ -44,5 +44,11 @@ cli.bat "help"             :: Kommando über die serielle Konsole schicken
   physischen Boards liefen bisher mit Firmware, die über das Schwesterprojekt geflasht wurde;
   dieses Projekt hier bringt jetzt den Quellcode mit, ersetzt aber noch nicht automatisch, was auf
   den Boards läuft (`flash.bat` erst nach Bedarf ausführen, nicht proaktiv).
+- **`build.bat` kopiert das Hex nach jedem erfolgreichen Build zusätzlich nach
+  `release\T1S_Follower.hex`** (seit 2026-08-31, wie im Schwesterprojekt, dort eingecheckt —
+  damit ein frischer Klon flashen kann, ohne vorher zu bauen). **Nur `build.bat` aktualisiert
+  diese Kopie** — ein Build direkt aus der MPLAB-X-IDE lässt `release\` veraltet stehen.
+  `flash.bat` flasht standardmäßig weiterhin aus `dist\`, nicht aus `release\` — Pfad explizit
+  angeben (`flash.bat release\T1S_Follower.hex`), um die eingecheckte Version zu flashen.
 - Sonst gilt dieselbe Arbeitsweise wie im Schwesterprojekt: Build in MPLAB X durch den User
   selbst, nicht proaktiv `build.bat`/`flash.bat` aufrufen, um etwas „zu beweisen".
