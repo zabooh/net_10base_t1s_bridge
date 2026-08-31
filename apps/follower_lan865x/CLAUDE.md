@@ -46,24 +46,26 @@ cli.bat "help"             :: Kommando über die serielle Konsole schicken
   überhaupt, siehe Eintrag unten); Follower A läuft weiterhin mit der alten, unverändert
   funktionierenden Firmware.
 
-## Bekannter, noch offener Fehler: TCP/ICMP-Pakete von diesem Follower selbst kaputt
+## Kein eigener Fehler — falsche Verdächtigung vom 2026-08-31 zurückgezogen
 
-**2026-08-31, gefunden, noch nicht behoben (auf User-Wunsch zurückgestellt — Fokus lag auf der
-Bridge).** Sowohl Follower A (alte Firmware) als auch Follower B (diese portierte Firmware, mit
-und ohne den `_Lock`/`_Unlock`-Fix unten) senden fehlerhafte ausgehende Pakete: ein per `ping`
-abgesetzter ICMP-Echo-Request hatte am PC-NIC (Wireshark-Mitschnitt) `IP Total Length: 128`, real
-aber nur 114 Byte vorhanden — Differenz exakt 14 Byte. Ein TCP-SYN (`iperf -c`) zeigte noch
-Schwereres: nur die ersten 8 Byte des TCP-Headers (Ports + Sequenznummer) gültig, die restlichen
-16 Byte (Ack, Flags, Fenster, Prüfsumme, Optionen) komplett Null — der Handshake kam gar nicht
-zustande. **Per Isolationstest bestätigt: unabhängig vom `_Lock`/`_Unlock`-Fix** (identischer
-Fehler mit zurückgenommenem Fix reproduziert) **und unabhängig von der Bridge** (identischer
-Fehler auf Follower A, deren Firmware nie angefasst wurde) — der Fehler liegt im eigenen
-TX-/ICMP-Pfad dieser Follower-Codebasis selbst, vermutlich nie zuvor auf echter Hardware
-verifiziert. Noch nicht root-gecauset. Bei nächster Gelegenheit: gleiche Methode wie beim
-Bridge-Fix in `apps\bridge_lan865x_100baseT\docs\mcc-generated-code-patches.md` Punkt 9 — Werte
-per `SYS_CONSOLE_PRINT` an der Paket-Konstruktionsstelle gegen einen Wireshark-Mitschnitt
-desselben Pakets korrelieren, nicht vom Schwesterprojekt übernehmen ohne Gegenprüfung (genau das
-ist beim ersten Bridge-Fixversuch schiefgegangen).
+Am 2026-08-31 während der Bridge-Fehlersuche zunächst fälschlich als „bekannter, offener
+Follower-Fehler" hier dokumentiert: kaputte ausgehende ICMP-/TCP-Pakete (Follower A **und**
+Follower B), scheinbar bestätigt per Isolationstest (unabhängig vom `_Lock`/`_Unlock`-Fix
+unten, unabhängig vom Follower — da auch auf der nie angefassten Follower-A-Firmware
+reproduziert). **Der Isolationstest war unvollständig** — er hat nie gegen eine tatsächlich
+korrekte Bridge-Firmware gegengeprüft, sondern nur gegen zwei verschiedene, zu dem Zeitpunkt
+beide fehlerhafte Zustände der Bridge (erst ein falscher Patch-Versuch, danach der
+unbehandelte Original-Bug). Auf Nutzerhinweis („ich glaube nicht, dass das der Follower ist")
+richtig nachgetestet: sowohl mit der Schwester-Bridge-Firmware als auch mit der eigenen,
+letztlich korrigierten `bridge_lan865x_100baseT`-Firmware (Punkt 9 in deren
+`docs\mcc-generated-code-patches.md`) liefern **beide** Follower (A und B) saubere ICMP- und
+TCP-Pakete — verifiziert per Wireshark (`ip.len` korrekt, keine Längen-Diskrepanz mehr) und per
+vollständigem iperf-TCP-Transfer (Follower B: 1663/1663 Pakete, 2,32 MB, 0 % Verlust,
+Client- und Server-Report identisch). **Es gibt keinen eigenständigen Follower-Bug** — die
+gesamte ursprüngliche Beobachtung war ein Artefakt der zum Testzeitpunkt kaputten Bridge.
+Lehre für künftige Isolationstests: eine dritte, unabhängig als korrekt bekannte Referenz
+(hier: die Schwester-Firmware) gehört in die Testreihe, nicht nur „gefixt vs. zurückgenommen"
+derselben eigenen Änderung.
 
 ## LAN865x-Treiber-Race gefixt (`_Lock`/`_Unlock`)
 
