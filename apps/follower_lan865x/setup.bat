@@ -14,18 +14,18 @@ setlocal
 ::
 :: The only other script you run directly, and only when it applies:
 :: switching which board flash.bat programs, via "install.bat --select" (see
-:: 2/4 below).
+:: 3/5 below).
 ::
 :: Connect the board via its USB debugger port BEFORE running this so the
 :: probe check can detect it. Steps are independent: a failure in one is
 :: reported but does not abort the rest.
 ::
 :: Ported from this repo's own bridge_lan865x_100baseT project's setup.bat
-:: (itself ported from the sister project t1s_100baset_bridge). Same
-:: simplification: no compiler-selection step (setup_compiler.py feeds
-:: build_summary.py, which neither this project nor the bridge one has),
-:: and no multi-board role-based flashing (flash_boards.py/boards.json) -
-:: this is a single, self-contained project, see flash.bat.
+:: (itself ported from the sister project t1s_100baset_bridge), including
+:: the XC32 compiler-selection step (scripts\setup_compiler.py) - advisory
+:: only here too, see that script's own docstring. Still no multi-board
+:: role-based flashing (flash_boards.py/boards.json) - this is a single,
+:: self-contained project, see flash.bat.
 :: ===========================================================================
 set "SCRIPT_DIR=%~dp0"
 set "RC=0"
@@ -41,24 +41,29 @@ if errorlevel 1 (
 )
 
 echo.
-echo [1/4] Python virtual environment ^(.venv^) + dependencies ...
+echo [1/5] Python virtual environment ^(.venv^) + dependencies ...
 call "%SCRIPT_DIR%batch\setup_venv.bat"
 if errorlevel 1 ( echo [WARN] .venv setup failed - check your network/pip. & set "RC=1" )
 
 rem Resolved AFTER step 1, which is what creates .venv on a fresh clone - every
 rem other .bat in this repo can assume .venv already exists and resolve PY near
 rem the top, but this script cannot. Falls back to the bare "python" from PATH
-rem if .venv is still missing (step 1 failed), so step 3 still gets attempted.
+rem if .venv is still missing (step 1 failed), so later steps still get attempted.
 set "PY=%SCRIPT_DIR%.venv\Scripts\python.exe"
 if not exist "%PY%" set "PY=python"
 
 echo.
-echo [2/4] Flasher prerequisites (pyOCD, EDBG probe, SAME54_DFP pack) ...
+echo [2/5] Compiler selection (XC32, advisory - see scripts\setup_compiler.py) ...
+"%PY%" "%SCRIPT_DIR%scripts\setup_compiler.py"
+if errorlevel 1 ( echo [WARN] setup_compiler.py failed - run it manually. & set "RC=1" )
+
+echo.
+echo [3/5] Flasher prerequisites (pyOCD, EDBG probe, SAME54_DFP pack) ...
 call "%SCRIPT_DIR%install.bat" --install
 if errorlevel 1 ( echo [WARN] install.bat reported missing prerequisites - see above. & set "RC=1" )
 
 echo.
-echo [3/4] VS Code debug fix (SAME54_DFP tool pack) ...
+echo [4/5] VS Code debug fix (SAME54_DFP tool pack) ...
 "%PY%" "%SCRIPT_DIR%scripts\setup_debug.py"
 if errorlevel 1 ( echo [WARN] setup_debug.py failed - only needed for VS Code debugging. & set "RC=1" )
 
@@ -70,7 +75,7 @@ rem project has no MCC model (see firmware\T1S_Follower.X\KEIN_MCC_MODELL.md) -
 rem genmk.bat only regenerates the Makefile fragments from the tracked
 rem nbproject\configurations.xml, it never touches firmware\src\config\default\.
 echo.
-echo [4/4] MPLAB X project Makefiles (no IDE session needed) ...
+echo [5/5] MPLAB X project Makefiles (no IDE session needed) ...
 call "%SCRIPT_DIR%batch\genmk.bat" "%SCRIPT_DIR%firmware\T1S_Follower.X"
 if errorlevel 1 ( echo [WARN] genmk.bat failed - build.bat will try again. & set "RC=1" )
 

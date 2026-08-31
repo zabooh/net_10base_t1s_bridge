@@ -28,12 +28,14 @@ cli.bat "help"             :: Kommando über die serielle Konsole schicken
 ```
 
 - **Eigene `.venv`**, kein geteiltes Repo-Root-Tooling — bewusst vereinfacht gegenüber dem
-  Schwesterprojekt: kein `setup_compiler.py` (füttert dort nur `build_summary.py`, das es hier
-  nicht gibt), kein rollenbasiertes `flash_boards.py`/`boards.json` (dort für zwei Follower A/B
-  gedacht) — `flash.bat` flasht direkt ein einzelnes Board über pyOCD, bei mehreren angeschlossenen
-  Probes mit `--probe <serial>` gezielt auswählen. Details und die Begründung für diese
-  Vereinfachung: `apps\bridge_lan865x_100baseT\CLAUDE.md` Abschnitt 2 (dieselbe Entscheidung dort
-  bereits für die Bridge getroffen).
+  Schwesterprojekt beim Flashen: kein rollenbasiertes `flash_boards.py`/`boards.json` (dort für
+  zwei Follower A/B gedacht) — `flash.bat` flasht direkt ein einzelnes Board über pyOCD, bei
+  mehreren angeschlossenen Probes mit `--probe <serial>` gezielt auswählen. `setup_compiler.py`
+  (XC32-Versionsauswahl) ist dagegen **doch** dabei (seit 2026-08-31, zwei installierte
+  XC32-Versionen auf diesem Rechner) — aber nur als Notiz, `build.bat` liest
+  `setup_compiler.config` nicht (dieselbe Begründung wie im Schwesterprojekt: der einzige echte
+  Konsument dort ist `build_summary.py`s `xc32-nm`, das es hier nicht gibt). Details:
+  `apps\bridge_lan865x_100baseT\CLAUDE.md` Abschnitt 2.
 - `batch\genmk.bat` nutzt dieselbe dynamische MPLAB-X-Versionserkennung wie
   `apps\bridge_lan865x_100baseT\batch\genmk.bat` (dort am 2026-08-31 gegen eine hartcodierte
   Versionsliste gefixt, die eine neuere installierte Version übersehen hätte — Details dort).
