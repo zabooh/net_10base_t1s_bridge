@@ -1,0 +1,5 @@
+# Per-machine tool state (written by the GUI tools' own setup dialogs / probe
+# selection) - never means anything on another machine or bench, so never
+# commit it. Same convention as the sister project t1s_100baset_bridge/.gitignore.
+json/bench.json
+json/term_ports.json

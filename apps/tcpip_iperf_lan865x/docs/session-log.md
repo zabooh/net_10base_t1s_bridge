@@ -1493,6 +1493,84 @@ completed step — do not wait until the end of the session.
   files afterward (`git checkout HEAD --`), confirmed `apply_patches.py --check`
   reports all six items `OK` again and `git status` is clean.
 
+### Ported `bridge_gui.py` (Bridge Status & Configuration GUI) from the sister project
+
+- User connected the sister project's `bridge_gui.py` to this project's board over
+  COM8 (screenshot) - it worked (the underlying `showenv` data it read was valid)
+  but showed a "no model for TIBR v5" warning plus an Error dialog, because
+  `env_model.json` only knew the sister's own `EBRG v5` id. Asked to port the GUI
+  over, implicitly including fixing that recognition gap.
+- Confirmed by reading `env.c` that this project's env record uses `ENV_MAGIC
+  0x54494252` ('TIBR'), `ENV_VERSION 5`, `ENV_VARIANT "tcpip_iperf_lan865x_bridge"`,
+  `sizeof(env_t) == 72` - and that every field's printed shape in `cmd_showenv()`
+  (ip/mask/gw/dns, mac, plca id/count, mirror/sniffer at-boot lines) is
+  field-for-field identical to `EBRG v5`'s regex patterns in the sister's
+  `env_model.json`, confirming this was a pure JSON data addition, not a Python
+  code change.
+- Created `json/` (repo-root-relative to `scripts/`, exactly where
+  `bridge_gui.py`'s `CONFIG_FILE`/`MODEL_FILE`/`ENV_MODEL_FILE` constants already
+  expect it via `Path(__file__).parent.parent / "json"`, no path-logic changes
+  needed): `lan8651_model.json` copied verbatim (chip register map, not
+  project-specific), `env_model.json` cloned from the sister's with a new
+  `"TIBR v5"` entry (`known_other_ids` also documents `EBRG`/`EPTP` so an
+  unrelated variant's record is never misinterpreted), `bridge_config.json`
+  written fresh with this project's real defaults (`192.168.0.11`/`.12`, PLCA id
+  5/count 8, COM8).
+- Copied `scripts/bridge_gui.py` and `scripts/dep_check.py`, adapted:
+  `RELEASE_HEX` now points at this project's actual build output
+  (`firmware/tcpip_iperf_lan865x.X/dist/default/production/tcpip_iperf_lan865x.X.production.hex`)
+  since (unlike the sister's `build.bat`) this project's `build.bat` does not copy
+  to a separate `release/` folder; `DEFAULT_CONFIG`'s fallback schema updated to
+  match the current `ip0/mask0/.../mirror` key layout (was a stale pre-mask/gw/dns
+  schema in the source, harmless in practice since `bridge_config.json` always
+  exists once created, but corrected while porting); `dep_check.py`'s
+  `INSTALL_SCRIPT` repointed at the sister project's own `batch\setup_venv.bat`,
+  consistent with this project's documented "no own `.venv`, reuse the sister's"
+  convention (CLAUDE.md section 2) - the missing-dependency dialog should never
+  actually fire here since `sv_ttk` is already installed in that shared venv.
+- Created `run_gui.bat` at the app root, mirroring `cli.bat`/`flash.bat`'s
+  established pattern (hardcoded shared-venv `python.exe` path, falls back to bare
+  `python`).
+- **Verified against the real board, not just statically:** `python -m py_compile`
+  on both ported `.py` files, `json.load()` on all three new JSON files, then a
+  standalone regex check reusing `bridge_gui.py`'s own identity+field pattern
+  matching logic against a live `showenv` capture
+  (`cli.bat --read 4 "showenv"` over COM8) - the identity line resolved to model
+  key `"TIBR v5"` and all 14 fields (`ip0/mask0/gw0/dns0/ip1/mask1/gw1/dns1/mac0/
+  mac1/plca_id/plca_cnt/mirror/sniffer`) matched with correct extracted values
+  (`192.168.0.11`, PLCA id 5 count 8, MAC `00:04:25:CA:CE:D9`/`...DA`, mirror/
+  sniffer both OFF) - confirming the "no model for" warning is resolved before
+  ever opening the actual window. Then launched `run_gui.bat` for real (background
+  process, no immediate exception/traceback) against COM8 for the user to visually
+  confirm the Bridge Parameters tab and exercise it interactively.
+
+### Ported `gui_term.py` (three-pane serial terminal) from the sister project
+
+- Follow-up to the `bridge_gui.py` port: "und jetzt das term" - `gui_term.py` is a
+  separate standalone tool (three serial consoles in one window, one click
+  connects all), not the inlined single-port Terminal tab already inside
+  `bridge_gui.py`. `dep_check.py`'s own docstring already called it out as "the
+  two GUI entry points, bridge_gui.py and gui_term.py".
+- No code changes needed at all: `CONFIG` resolves `json/term_ports.json` via the
+  same `parent-of-scripts/json/...` pattern as `bridge_gui.py`'s constants, which
+  already lines up correctly in this project's layout, and the tool has no other
+  project-specific strings (checked - only generic "T1S Bridge Terminals" window
+  title). Copied `scripts/gui_term.py` verbatim.
+- `json/term_ports.json` (per-machine COM-port-to-name assignment, gitignored in
+  the sister project - never means anything on another machine) copied as-is
+  since this is genuinely the *same bench*: slot 1 `bridge`/COM8 (this board),
+  slot 2 `A`/COM10, slot 3 `B`/COM23 - the same three boards already named
+  FollowerA/FollowerB in `iperf_matrix_test.py`/`sniffer_capture_test.py`.
+- Created `run_term.bat` (mirrors the sister's own, shared-venv `pythonw.exe`
+  pattern like `run_gui.bat`) and `apps/tcpip_iperf_lan865x/.gitignore`
+  (`json/bench.json`, `json/term_ports.json` - per-machine state, same two
+  entries as the sister project's `.gitignore`).
+- **Verified**: `python -m py_compile` clean; `gui_term.py --selftest` (built-in,
+  no window) ran **14/14 checks passed**, correctly read back the copied
+  `term_ports.json` (`1=bridge(COM8), 2=A(COM10), 3=B(COM23)`, `font_size=10`);
+  then launched the real window for real (background process, no immediate
+  exception) for the user to click "Connect All" and confirm all three panes.
+
 ---
 
 <!-- Append new dated entries above this line as work continues. -->
