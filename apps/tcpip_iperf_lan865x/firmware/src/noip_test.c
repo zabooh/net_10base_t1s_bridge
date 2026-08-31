@@ -38,6 +38,7 @@
 #include "system/command/sys_command.h"
 #include "tcpip_manager_control.h"                           /* TCPIP_NET_IF, ->hIfMac */
 #include "noip_test.h"
+#include "cmd_print.h"                                        /* CMD_PRINT/CMD_MSG - reply to pCmdIO, not always the serial console */
 
 /* Interface the frames go out of: 0 = eth0, the 10BASE-T1S MAC-PHY. */
 #define NOIP_IF          0u
@@ -154,19 +155,19 @@ static void cmd_noip_send(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv)
     if (argc >= 3) { gap_ms = (uint32_t)strtoul(argv[2], NULL, 10); }
     if (argc >= 4) { size = (uint32_t)strtoul(argv[3], NULL, 10); }
     if (count == 0u || count > NOIP_MAX_COUNT) {
-        SYS_CONSOLE_PRINT("[NoIP] count must be 1..%u\r\n", (unsigned)NOIP_MAX_COUNT);
+        CMD_PRINT(pCmdIO, "[NoIP] count must be 1..%u\r\n", (unsigned)NOIP_MAX_COUNT);
         return;
     }
     if (gap_ms > NOIP_MAX_GAP_MS) {
-        SYS_CONSOLE_PRINT("[NoIP] gap_ms must be 0..%u\r\n", (unsigned)NOIP_MAX_GAP_MS);
+        CMD_PRINT(pCmdIO, "[NoIP] gap_ms must be 0..%u\r\n", (unsigned)NOIP_MAX_GAP_MS);
         return;
     }
     if (size < NOIP_FRAME_LEN || size > NOIP_MAX_FRAME_LEN) {
-        SYS_CONSOLE_PRINT("[NoIP] size must be %u..%u\r\n", (unsigned)NOIP_FRAME_LEN, (unsigned)NOIP_MAX_FRAME_LEN);
+        CMD_PRINT(pCmdIO, "[NoIP] size must be %u..%u\r\n", (unsigned)NOIP_FRAME_LEN, (unsigned)NOIP_MAX_FRAME_LEN);
         return;
     }
 
-    SYS_CONSOLE_PRINT("[NoIP-TX] start count=%u gap_ms=%u size=%u\r\n",
+    CMD_PRINT(pCmdIO, "[NoIP-TX] start count=%u gap_ms=%u size=%u\r\n",
         (unsigned)count, (unsigned)gap_ms, (unsigned)size);
 
     /* Get our MAC from the T1S interface (index 0 = eth0) */
@@ -192,11 +193,11 @@ static void cmd_noip_send(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv)
         s_frame[16] = (uint8_t)((s_tx_cnt >>  8u) & 0xFFu);
         s_frame[17] = (uint8_t)( s_tx_cnt         & 0xFFu);
         if (!noip_send_raw_frame(s_frame, (uint16_t)size)) {
-            SYS_CONSOLE_PRINT("[NoIP-TX] send failed at seq=%u\r\n", (unsigned)s_tx_cnt);
+            CMD_PRINT(pCmdIO, "[NoIP-TX] send failed at seq=%u\r\n", (unsigned)s_tx_cnt);
             s_tx_cnt--;
             break;
         }
-        SYS_CONSOLE_PRINT("[NoIP-TX] sent seq=%u\r\n", (unsigned)s_tx_cnt);
+        CMD_PRINT(pCmdIO, "[NoIP-TX] sent seq=%u\r\n", (unsigned)s_tx_cnt);
         if (gap_ms > 0u) {
             noip_wait_ms(gap_ms);
         }
@@ -205,7 +206,8 @@ static void cmd_noip_send(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv)
 
 static void cmd_noip_stat(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv)
 {
-    SYS_CONSOLE_PRINT("[NoIP] TX=%u  RX=%u\r\n", (unsigned)s_tx_cnt, (unsigned)s_rx_cnt);
+    (void)argc; (void)argv;
+    CMD_PRINT(pCmdIO, "[NoIP] TX=%u  RX=%u\r\n", (unsigned)s_tx_cnt, (unsigned)s_rx_cnt);
 }
 
 static const SYS_CMD_DESCRIPTOR noip_cmd_tbl[] = {

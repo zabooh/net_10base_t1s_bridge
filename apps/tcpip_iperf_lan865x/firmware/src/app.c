@@ -43,6 +43,7 @@
 #include "port_mirror.h"
 #include "noip_test.h"
 #include "testserver.h"
+#include "cmd_print.h"          /* CMD_PRINT/CMD_MSG - reply to pCmdIO, not always the serial console */
 
 // *****************************************************************************
 // *****************************************************************************
@@ -293,22 +294,22 @@ void BRIDGE_TimerCallback(uintptr_t context) {
 
 // Help command for Test group
 static void test_help(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
-    (void)pCmdIO; (void)argc; (void)argv;
-    SYS_CONSOLE_PRINT("Test group commands:\n\r");
-    SYS_CONSOLE_PRINT("  help                         - Show this help\n\r");
-    SYS_CONSOLE_PRINT("  timestamp                    - Show build timestamp\n\r");
-    SYS_CONSOLE_PRINT("  uptime                       - Time since boot/last reset\n\r");
-    SYS_CONSOLE_PRINT("  ipdump <mode>                - Dump RX IP packets (0=off, 1=eth0, 2=eth1, 3=both)\n\r");
-    SYS_CONSOLE_PRINT("  stats                        - Show TX/RX counters for eth0 and eth1\n\r");
-    SYS_CONSOLE_PRINT("  meminfo                      - Free memory on the C-runtime heap and the TCP/IP heap\n\r");
-    SYS_CONSOLE_PRINT("  dump <addr> <count>          - Dump memory (hex addr, count)\n\r");
-    SYS_CONSOLE_PRINT("  peek <addr> [size]           - Read a single value (size=1|2|4)\n\r");
-    SYS_CONSOLE_PRINT("  poke <addr> <val> [size]     - Write a single value (size=1|2|4)\n\r");
-    SYS_CONSOLE_PRINT("  logclear                     - Clear deferred packet log buffer\n\r");
-    SYS_CONSOLE_PRINT("  logstat                      - Show deferred log statistics\n\r");
-    SYS_CONSOLE_PRINT("\n\rLAN865x registers, test modes, PLCA: see 'lanhelp'\n\r");
-    SYS_CONSOLE_PRINT("Port mirror/sniffer: see 'mirror'/'sniffer'. Raw frame test: see 'noip_send'.\n\r");
-    SYS_CONSOLE_PRINT("TCP echo server: see 'testserver'. Persistent config: see 'showenv'.\n\r");
+    (void)argc; (void)argv;
+    CMD_PRINT(pCmdIO, "Test group commands:\n\r");
+    CMD_PRINT(pCmdIO, "  help                         - Show this help\n\r");
+    CMD_PRINT(pCmdIO, "  timestamp                    - Show build timestamp\n\r");
+    CMD_PRINT(pCmdIO, "  uptime                       - Time since boot/last reset\n\r");
+    CMD_PRINT(pCmdIO, "  ipdump <mode>                - Dump RX IP packets (0=off, 1=eth0, 2=eth1, 3=both)\n\r");
+    CMD_PRINT(pCmdIO, "  stats                        - Show TX/RX counters for eth0 and eth1\n\r");
+    CMD_PRINT(pCmdIO, "  meminfo                      - Free memory on the C-runtime heap and the TCP/IP heap\n\r");
+    CMD_PRINT(pCmdIO, "  dump <addr> <count>          - Dump memory (hex addr, count)\n\r");
+    CMD_PRINT(pCmdIO, "  peek <addr> [size]           - Read a single value (size=1|2|4)\n\r");
+    CMD_PRINT(pCmdIO, "  poke <addr> <val> [size]     - Write a single value (size=1|2|4)\n\r");
+    CMD_PRINT(pCmdIO, "  logclear                     - Clear deferred packet log buffer\n\r");
+    CMD_PRINT(pCmdIO, "  logstat                      - Show deferred log statistics\n\r");
+    CMD_PRINT(pCmdIO, "\n\rLAN865x registers, test modes, PLCA: see 'lanhelp'\n\r");
+    CMD_PRINT(pCmdIO, "Port mirror/sniffer: see 'mirror'/'sniffer'. Raw frame test: see 'noip_send'.\n\r");
+    CMD_PRINT(pCmdIO, "TCP echo server: see 'testserver'. Persistent config: see 'showenv'.\n\r");
 }
 
 // stats command: print TX/RX software counters for both interfaces
@@ -317,34 +318,34 @@ static void cmd_stats(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
     TCPIP_MAC_TX_STATISTICS txStats;
     const char *ifNames[] = {"eth0", "eth1"};
     int i;
-    (void)pCmdIO; (void)argc; (void)argv;
+    (void)argc; (void)argv;
     for (i = 0; i < 2; i++) {
         TCPIP_NET_HANDLE netH = TCPIP_STACK_NetHandleGet(ifNames[i]);
         if (netH == NULL) {
-            SYS_CONSOLE_PRINT("%s: not found\n\r", ifNames[i]);
+            CMD_PRINT(pCmdIO, "%s: not found\n\r", ifNames[i]);
             continue;
         }
         if (TCPIP_STACK_NetMACStatisticsGet(netH, &rxStats, &txStats)) {
-            SYS_CONSOLE_PRINT("%s TX: ok=%d err=%d qFull=%d pend=%d\n\r",
+            CMD_PRINT(pCmdIO, "%s TX: ok=%d err=%d qFull=%d pend=%d\n\r",
                 ifNames[i], txStats.nTxOkPackets, txStats.nTxErrorPackets,
                 txStats.nTxQueueFull, txStats.nTxPendBuffers);
-            SYS_CONSOLE_PRINT("%s RX: ok=%d err=%d nobufs=%d pend=%d\n\r",
+            CMD_PRINT(pCmdIO, "%s RX: ok=%d err=%d nobufs=%d pend=%d\n\r",
                 ifNames[i], rxStats.nRxOkPackets, rxStats.nRxErrorPackets,
                 rxStats.nRxBuffNotAvailable, rxStats.nRxPendBuffers);
         } else {
-            SYS_CONSOLE_PRINT("%s: stats not available\n\r", ifNames[i]);
+            CMD_PRINT(pCmdIO, "%s: stats not available\n\r", ifNames[i]);
         }
     }
-    SYS_CONSOLE_PRINT("main loop: %lu cycles/s\n\r", (unsigned long)s_idle_cycles_per_sec);
+    CMD_PRINT(pCmdIO, "main loop: %lu cycles/s\n\r", (unsigned long)s_idle_cycles_per_sec);
 }
 
 // Timestamp command to show build info
 static void show_timestamp(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
-    (void)pCmdIO; (void)argc; (void)argv;
-    SYS_CONSOLE_PRINT("======================================\n\r");
-    SYS_CONSOLE_PRINT("tcpip_iperf_lan865x bridge - Build Info\n\r");
-    SYS_CONSOLE_PRINT("Build Timestamp: "__DATE__" "__TIME__"\n\r");
-    SYS_CONSOLE_PRINT("======================================\n\r");
+    (void)argc; (void)argv;
+    CMD_PRINT(pCmdIO, "======================================\n\r");
+    CMD_PRINT(pCmdIO, "tcpip_iperf_lan865x bridge - Build Info\n\r");
+    CMD_PRINT(pCmdIO, "Build Timestamp: "__DATE__" "__TIME__"\n\r");
+    CMD_PRINT(pCmdIO, "======================================\n\r");
 }
 
 /* Time since boot/last reset, human-readable - the fast way to tell "the
@@ -358,9 +359,9 @@ static void cmd_uptime(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
     uint32_t hours = (uint32_t)((total_s % 86400ULL) / 3600ULL);
     uint32_t mins  = (uint32_t)((total_s % 3600ULL) / 60ULL);
     uint32_t secs  = (uint32_t)(total_s % 60ULL);
-    (void)pCmdIO; (void)argc; (void)argv;
+    (void)argc; (void)argv;
 
-    SYS_CONSOLE_PRINT("uptime: %ud %02u:%02u:%02u  (%lu s since boot/last reset)\r\n",
+    CMD_PRINT(pCmdIO, "uptime: %ud %02u:%02u:%02u  (%lu s since boot/last reset)\r\n",
         (unsigned)days, (unsigned)hours, (unsigned)mins, (unsigned)secs,
         (unsigned long)total_s);
 }
@@ -406,22 +407,22 @@ static void DumpMem(uint32_t addr, uint32_t count)
 }
 
 static void cmd_logclear(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv) {
-    (void)pCmdIO; (void)argc; (void)argv;
+    (void)argc; (void)argv;
     pkt_log.read_idx     = pkt_log.write_idx; /* drain pending entries */
     pkt_log.overflow_cnt = 0u;
     pkt_log.total_logged = 0u;
     frame_data_pool.write_offset = 0u;
-    SYS_CONSOLE_PRINT("[LOG] ring buffer cleared\r\n");
+    CMD_PRINT(pCmdIO, "[LOG] ring buffer cleared\r\n");
 }
 
 static void cmd_logstat(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv) {
-    (void)pCmdIO; (void)argc; (void)argv;
+    (void)argc; (void)argv;
     uint32_t wi      = pkt_log.write_idx;  /* snapshot volatile index */
     uint32_t pending = (wi - pkt_log.read_idx) & (PKT_LOG_BUF_SIZE - 1u);
-    SYS_CONSOLE_PRINT("[LOG] total=%u pending=%u overflows=%u bufsize=%u\r\n",
+    CMD_PRINT(pCmdIO, "[LOG] total=%u pending=%u overflows=%u bufsize=%u\r\n",
         (unsigned)pkt_log.total_logged, (unsigned)pending,
         (unsigned)pkt_log.overflow_cnt, (unsigned)PKT_LOG_BUF_SIZE);
-    SYS_CONSOLE_PRINT("[LOG] pool_offset=%u pool_size=%u (%u frames x %u bytes)\r\n",
+    CMD_PRINT(pCmdIO, "[LOG] pool_offset=%u pool_size=%u (%u frames x %u bytes)\r\n",
         (unsigned)frame_data_pool.write_offset,
         (unsigned)FRAME_DATA_POOL_SIZE,
         (unsigned)PKT_LOG_MAX_FRAMES,
@@ -429,33 +430,67 @@ static void cmd_logstat(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv) {
 }
 
 static void my_dump(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
-    (void)pCmdIO;
     if (argc < 2) {
-        SYS_CONSOLE_PRINT("Usage: ipdump <mode>  (0=off, 1=eth0, 2=eth1, 3=both)\n\r");
+        CMD_PRINT(pCmdIO, "Usage: ipdump <mode>  (0=off, 1=eth0, 2=eth1, 3=both)\n\r");
         return;
     }
     ipdump_mode = strtoul(argv[1], NULL, 16);
     if (ipdump_mode == 0) {
-        SYS_CONSOLE_PRINT("IP Layer Dump de-activated\n\r");
+        CMD_PRINT(pCmdIO, "IP Layer Dump de-activated\n\r");
     } else if (ipdump_mode == 1) {
-        SYS_CONSOLE_PRINT("IP Layer Dump activated on eth0\n\r");
+        CMD_PRINT(pCmdIO, "IP Layer Dump activated on eth0\n\r");
     } else if (ipdump_mode == 2) {
-        SYS_CONSOLE_PRINT("IP Layer Dump activated on eth1\n\r");
+        CMD_PRINT(pCmdIO, "IP Layer Dump activated on eth1\n\r");
     } else if (ipdump_mode == 3) {
-        SYS_CONSOLE_PRINT("IP Layer Dump activated on eth0 and eth1\n\r");
+        CMD_PRINT(pCmdIO, "IP Layer Dump activated on eth0 and eth1\n\r");
     } else {
-        SYS_CONSOLE_PRINT("Parameter out of range\n\r");
+        CMD_PRINT(pCmdIO, "Parameter out of range\n\r");
+    }
+}
+
+/* Same hex dump as DumpMem() above, but for the "dump" command itself: replies
+ * to whichever device issued it (CMD_PRINT) instead of always the serial
+ * console. Kept as a separate function rather than adding a pCmdIO parameter
+ * to DumpMem() - that one is also called from the deferred packet-log drain
+ * in APP_Tasks() (PKT_LOG_ETH1), which has no command context and legitimately
+ * always belongs on the serial console, throttled against
+ * SYS_CONSOLE_WriteFreeBufferCountGet() (see DumpMem()'s own comment) - a
+ * check this generic CMD_PRINT path has no equivalent for. */
+static void CmdDumpMem(SYS_CMD_DEVICE_NODE *pCmdIO, uint32_t addr, uint32_t count)
+{
+    uint8_t *puc = (uint8_t *) addr;
+    uint32_t ix;
+
+    for (ix = 0; ix < count; ix += 16u) {
+        uint32_t lineBytes = (count - ix > 16u) ? 16u : (count - ix);
+        char line[96];
+        char ascii[17];
+        int pos;
+        uint32_t j;
+
+        pos = snprintf(line, sizeof(line), "%08x: ", (unsigned int)(addr + ix));
+        for (j = 0; j < 16u; j++) {
+            if (j < lineBytes) {
+                uint8_t b = puc[ix + j];
+                pos += snprintf(line + pos, sizeof(line) - (size_t)pos, " %02x", b);
+                ascii[j] = ((b > 31u) && (b < 127u)) ? (char)b : '.';
+            } else {
+                pos += snprintf(line + pos, sizeof(line) - (size_t)pos, "   ");
+            }
+        }
+        ascii[lineBytes] = '\0';
+        pos += snprintf(line + pos, sizeof(line) - (size_t)pos, "   %s\n\r", ascii);
+
+        CMD_PRINT(pCmdIO, "%s", line);
     }
 }
 
 /* CLI command: dump <address_hex> <count> */
 static void cmd_mem_dump(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv)
 {
-    (void)pCmdIO;
-
     if (argc != 3) {
-        SYS_CONSOLE_PRINT("Usage: dump <address_hex> <count>\n\r");
-        SYS_CONSOLE_PRINT("Example: dump 0x20000000 64\n\r");
+        CMD_PRINT(pCmdIO, "Usage: dump <address_hex> <count>\n\r");
+        CMD_PRINT(pCmdIO, "Example: dump 0x20000000 64\n\r");
         return;
     }
 
@@ -463,22 +498,20 @@ static void cmd_mem_dump(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv)
     uint32_t count = strtoul(argv[2], NULL, 0);
 
     if (count == 0u) {
-        SYS_CONSOLE_PRINT("Count must be > 0\n\r");
+        CMD_PRINT(pCmdIO, "Count must be > 0\n\r");
         return;
     }
 
-    SYS_CONSOLE_PRINT("Memory dump: 0x%08X  %u bytes\n\r", (unsigned int)addr, (unsigned int)count);
-    DumpMem(addr, count);
+    CMD_PRINT(pCmdIO, "Memory dump: 0x%08X  %u bytes\n\r", (unsigned int)addr, (unsigned int)count);
+    CmdDumpMem(pCmdIO, addr, count);
 }
 
 /* CLI command: peek <address_hex> [size=1|2|4, default 4] - read a single value */
 static void cmd_mem_peek(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv)
 {
-    (void)pCmdIO;
-
     if (argc < 2 || argc > 3) {
-        SYS_CONSOLE_PRINT("Usage: peek <address_hex> [size=1|2|4]\n\r");
-        SYS_CONSOLE_PRINT("Example: peek 0x42000000 4\n\r");
+        CMD_PRINT(pCmdIO, "Usage: peek <address_hex> [size=1|2|4]\n\r");
+        CMD_PRINT(pCmdIO, "Example: peek 0x42000000 4\n\r");
         return;
     }
 
@@ -487,16 +520,16 @@ static void cmd_mem_peek(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv)
 
     switch (size) {
         case 1u:
-            SYS_CONSOLE_PRINT("0x%08X: 0x%02X\n\r", (unsigned int)addr, (unsigned int)*(volatile uint8_t*)addr);
+            CMD_PRINT(pCmdIO, "0x%08X: 0x%02X\n\r", (unsigned int)addr, (unsigned int)*(volatile uint8_t*)addr);
             break;
         case 2u:
-            SYS_CONSOLE_PRINT("0x%08X: 0x%04X\n\r", (unsigned int)addr, (unsigned int)*(volatile uint16_t*)addr);
+            CMD_PRINT(pCmdIO, "0x%08X: 0x%04X\n\r", (unsigned int)addr, (unsigned int)*(volatile uint16_t*)addr);
             break;
         case 4u:
-            SYS_CONSOLE_PRINT("0x%08X: 0x%08X\n\r", (unsigned int)addr, (unsigned int)*(volatile uint32_t*)addr);
+            CMD_PRINT(pCmdIO, "0x%08X: 0x%08X\n\r", (unsigned int)addr, (unsigned int)*(volatile uint32_t*)addr);
             break;
         default:
-            SYS_CONSOLE_PRINT("Size must be 1, 2, or 4\n\r");
+            CMD_PRINT(pCmdIO, "Size must be 1, 2, or 4\n\r");
             break;
     }
 }
@@ -504,11 +537,9 @@ static void cmd_mem_peek(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv)
 /* CLI command: poke <address_hex> <value_hex> [size=1|2|4, default 4] - write a single value */
 static void cmd_mem_poke(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv)
 {
-    (void)pCmdIO;
-
     if (argc < 3 || argc > 4) {
-        SYS_CONSOLE_PRINT("Usage: poke <address_hex> <value_hex> [size=1|2|4]\n\r");
-        SYS_CONSOLE_PRINT("Example: poke 0x42000000 0x12345678 4\n\r");
+        CMD_PRINT(pCmdIO, "Usage: poke <address_hex> <value_hex> [size=1|2|4]\n\r");
+        CMD_PRINT(pCmdIO, "Example: poke 0x42000000 0x12345678 4\n\r");
         return;
     }
 
@@ -519,18 +550,18 @@ static void cmd_mem_poke(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv)
     switch (size) {
         case 1u:
             *(volatile uint8_t*)addr = (uint8_t)value;
-            SYS_CONSOLE_PRINT("0x%08X <= 0x%02X\n\r", (unsigned int)addr, (unsigned int)(uint8_t)value);
+            CMD_PRINT(pCmdIO, "0x%08X <= 0x%02X\n\r", (unsigned int)addr, (unsigned int)(uint8_t)value);
             break;
         case 2u:
             *(volatile uint16_t*)addr = (uint16_t)value;
-            SYS_CONSOLE_PRINT("0x%08X <= 0x%04X\n\r", (unsigned int)addr, (unsigned int)(uint16_t)value);
+            CMD_PRINT(pCmdIO, "0x%08X <= 0x%04X\n\r", (unsigned int)addr, (unsigned int)(uint16_t)value);
             break;
         case 4u:
             *(volatile uint32_t*)addr = value;
-            SYS_CONSOLE_PRINT("0x%08X <= 0x%08X\n\r", (unsigned int)addr, (unsigned int)value);
+            CMD_PRINT(pCmdIO, "0x%08X <= 0x%08X\n\r", (unsigned int)addr, (unsigned int)value);
             break;
         default:
-            SYS_CONSOLE_PRINT("Size must be 1, 2, or 4\n\r");
+            CMD_PRINT(pCmdIO, "Size must be 1, 2, or 4\n\r");
             break;
     }
 }
@@ -558,18 +589,18 @@ static void cmd_meminfo(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
     size_t total = (size_t)((uintptr_t)&_eheap - (uintptr_t)&_heap);  /* via uintptr_t: not UB pointer subtraction */
     size_t largest = cheap_largest_free(total);
     TCPIP_STACK_HEAP_HANDLE h;
-    (void)pCmdIO; (void)argc; (void)argv;
+    (void)argc; (void)argv;
 
-    SYS_CONSOLE_PRINT("C-runtime heap: total=%u  largest free block=%u  (nano-malloc; no exact free count)\r\n",
+    CMD_PRINT(pCmdIO, "C-runtime heap: total=%u  largest free block=%u  (nano-malloc; no exact free count)\r\n",
         (unsigned)total, (unsigned)largest);
 
     h = TCPIP_STACK_HeapHandleGet(TCPIP_STACK_HEAP_TYPE_INTERNAL, 0);
     if (h != 0) {
-        SYS_CONSOLE_PRINT("TCP/IP heap:    size=%u  free=%u  maxblock=%u  highwater=%u\r\n",
+        CMD_PRINT(pCmdIO, "TCP/IP heap:    size=%u  free=%u  maxblock=%u  highwater=%u\r\n",
             (unsigned)TCPIP_STACK_HEAP_Size(h), (unsigned)TCPIP_STACK_HEAP_FreeSize(h),
             (unsigned)TCPIP_STACK_HEAP_MaxSize(h), (unsigned)TCPIP_STACK_HEAP_HighWatermark(h));
     } else {
-        SYS_CONSOLE_PRINT("TCP/IP heap:    (no handle)\r\n");
+        CMD_PRINT(pCmdIO, "TCP/IP heap:    (no handle)\r\n");
     }
 }
 

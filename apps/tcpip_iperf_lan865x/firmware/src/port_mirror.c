@@ -38,6 +38,7 @@
 #include "port_mirror.h"
 #include "env.h"                                             /* env_mirror(): persisted start state */
 #include "lan865x_diag.h"                                    /* LAN865X_DIAG_Rmw(): T1SPMACTL.TXD    */
+#include "cmd_print.h"                                        /* CMD_PRINT/CMD_MSG - reply to pCmdIO, not always the serial console */
 
 /* Interface indices: source of the mirrored traffic, and where the copies go. */
 #define MIRROR_SRC_IF   0u    /* eth0, the 10BASE-T1S MAC-PHY */
@@ -292,16 +293,16 @@ void mirror_eth0_tx_hook(TCPIP_MAC_PACKET *txPkt)
 }
 
 /* Temporary debug helper - see the counter declarations above. */
-static void mirror_print_dbg_counters(void) {
-    SYS_CONSOLE_PRINT("  dbg: rx_hook=%lu passed_filter=%lu pool_empty=%lu no_eth1=%lu tx_submitted=%lu\n\r",
+static void mirror_print_dbg_counters(SYS_CMD_DEVICE_NODE* pCmdIO) {
+    CMD_PRINT(pCmdIO, "  dbg: rx_hook=%lu passed_filter=%lu pool_empty=%lu no_eth1=%lu tx_submitted=%lu\n\r",
                        (unsigned long)s_dbg_rx_hook_calls, (unsigned long)s_dbg_rx_passed_filter,
                        (unsigned long)s_dbg_pool_empty, (unsigned long)s_dbg_no_eth1,
                        (unsigned long)s_dbg_tx_submitted);
-    SYS_CONSOLE_PRINT("  dbg: ack_ok=%lu ack_fail=%lu last_ack_res=%d max_len_submitted=%u max_len_ok=%u\n\r",
+    CMD_PRINT(pCmdIO, "  dbg: ack_ok=%lu ack_fail=%lu last_ack_res=%d max_len_submitted=%u max_len_ok=%u\n\r",
                        (unsigned long)s_dbg_ack_ok, (unsigned long)s_dbg_ack_fail,
                        (int)s_dbg_last_ack_res, (unsigned)s_dbg_max_len_submitted,
                        (unsigned)s_dbg_max_len_ok);
-    SYS_CONSOLE_PRINT("  dbg: truncated=%lu (frames cut to %u bytes before mirroring, see docs/SNIFFER_4_ERGEBNISSE.md)\n\r",
+    CMD_PRINT(pCmdIO, "  dbg: truncated=%lu (frames cut to %u bytes before mirroring, see docs/SNIFFER_4_ERGEBNISSE.md)\n\r",
                        (unsigned long)s_dbg_truncated, (unsigned)MIRROR_SAFE_FRAME_LEN);
 }
 
@@ -312,12 +313,12 @@ static void cmd_mirror(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
     if (argc >= 2) {
         s_mirror_on = (strtoul(argv[1], NULL, 0) != 0u);
     }
-    SYS_CONSOLE_PRINT("eth0(T1S)->eth1 mirror: %s\n\r", s_mirror_on ? "ON" : "OFF");
+    CMD_PRINT(pCmdIO, "eth0(T1S)->eth1 mirror: %s\n\r", s_mirror_on ? "ON" : "OFF");
     if (s_mirror_on) {
-        SYS_CONSOLE_PRINT("  Capture on the PC (eth1) in Wireshark to see the T1S bus traffic:\n\r");
-        SYS_CONSOLE_PRINT("  RX (endpoint -> bridge: replies/ARP) AND the bridge's own TX.\n\r");
+        CMD_PRINT(pCmdIO, "  Capture on the PC (eth1) in Wireshark to see the T1S bus traffic:\n\r");
+        CMD_PRINT(pCmdIO, "  RX (endpoint -> bridge: replies/ARP) AND the bridge's own TX.\n\r");
     }
-    mirror_print_dbg_counters();
+    mirror_print_dbg_counters(pCmdIO);
 }
 
 /* sniffer [0|1] - like 'mirror', but without the destination-MAC filter on RX:
@@ -330,13 +331,13 @@ static void cmd_sniffer(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
     if (argc >= 2) {
         SNIFFER_Set(strtoul(argv[1], NULL, 0) != 0u);
     }
-    SYS_CONSOLE_PRINT("eth0(T1S)->eth1 sniffer: %s\n\r", s_sniffer_on ? "ON" : "OFF");
+    CMD_PRINT(pCmdIO, "eth0(T1S)->eth1 sniffer: %s\n\r", s_sniffer_on ? "ON" : "OFF");
     if (s_sniffer_on) {
-        SYS_CONSOLE_PRINT("  Capture on the PC (eth1) in Wireshark to see ALL T1S bus traffic,\n\r");
-        SYS_CONSOLE_PRINT("  including frames between other nodes that do not involve this bridge.\n\r");
-        SYS_CONSOLE_PRINT("  T1S transmitter disabled (passive tap) - forwarding is paused meanwhile.\n\r");
+        CMD_PRINT(pCmdIO, "  Capture on the PC (eth1) in Wireshark to see ALL T1S bus traffic,\n\r");
+        CMD_PRINT(pCmdIO, "  including frames between other nodes that do not involve this bridge.\n\r");
+        CMD_PRINT(pCmdIO, "  T1S transmitter disabled (passive tap) - forwarding is paused meanwhile.\n\r");
     }
-    mirror_print_dbg_counters();
+    mirror_print_dbg_counters(pCmdIO);
 }
 
 /* bigframe <total_frame_len> - diagnostic only, unrelated to mirror/sniffer
@@ -375,26 +376,26 @@ static void cmd_bigframe(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
     TCPIP_NET_HANDLE  eth1;
 
     if (argc < 2) {
-        SYS_CONSOLE_PRINT("usage: bigframe <total_frame_len_bytes>  (%u..%u)\n\r",
+        CMD_PRINT(pCmdIO, "usage: bigframe <total_frame_len_bytes>  (%u..%u)\n\r",
             (unsigned)BIGFRAME_MIN_LEN, (unsigned)BIGFRAME_MAX_LEN);
         return;
     }
     len = strtoul(argv[1], NULL, 0);
     if (len < BIGFRAME_MIN_LEN || len > BIGFRAME_MAX_LEN) {
-        SYS_CONSOLE_PRINT("bigframe: length must be %u..%u\n\r",
+        CMD_PRINT(pCmdIO, "bigframe: length must be %u..%u\n\r",
             (unsigned)BIGFRAME_MIN_LEN, (unsigned)BIGFRAME_MAX_LEN);
         return;
     }
 
     eth1 = TCPIP_STACK_IndexToNet(MIRROR_DST_IF);
     if (eth1 == NULL) {
-        SYS_CONSOLE_PRINT("bigframe: eth1 not up\n\r");
+        CMD_PRINT(pCmdIO, "bigframe: eth1 not up\n\r");
         return;
     }
 
     pTx = TCPIP_PKT_PacketAlloc(sizeof(TCPIP_MAC_PACKET), (uint16_t)len, 0);
     if (pTx == NULL) {
-        SYS_CONSOLE_PRINT("bigframe: packet alloc failed\n\r");
+        CMD_PRINT(pCmdIO, "bigframe: packet alloc failed\n\r");
         return;
     }
 
@@ -414,7 +415,7 @@ static void cmd_bigframe(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
     pTx->ackFunc  = bigframe_pkt_ack;
     pTx->ackParam = NULL;
 
-    SYS_CONSOLE_PRINT("bigframe: sending %u-byte raw frame on eth1 (dst=broadcast, ethertype=0x%04X)\n\r",
+    CMD_PRINT(pCmdIO, "bigframe: sending %u-byte raw frame on eth1 (dst=broadcast, ethertype=0x%04X)\n\r",
         (unsigned)len, (unsigned)BIGFRAME_ETHERTYPE);
     (void) DRV_GMAC_PacketTx(((TCPIP_NET_IF*)eth1)->hIfMac, pTx);
 }

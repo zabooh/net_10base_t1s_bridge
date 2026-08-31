@@ -40,6 +40,7 @@
 #include "config/default/driver/lan865x/drv_lan865x.h"
 #include "system/command/sys_command.h"
 #include "lan865x_diag.h"
+#include "cmd_print.h"                                        /* CMD_PRINT/CMD_MSG/CMD_PRINT_OR_CONSOLE - reply to pCmdIO, not always the serial console */
 
 // *****************************************************************************
 // Section: Module state
@@ -66,6 +67,18 @@ static uint32_t    s_mask         = 0u;     /* read-modify-write bit mask (LAN_W
 static uint32_t    s_rmw_final    = 0u;     /* word the driver actually wrote back on RMW     */
 static uint64_t    s_expire_tick  = 0u;     /* SYS_TIME tick at which the operation times out */
 static bool        s_op_initiated = false;
+
+/* Who to send the eventual result to - LAN865X_DIAG_Tasks() completes the pending
+ * register operation asynchronously, well after the command handler that started
+ * it (cmd_lan_read/write/rmw, cmd_testmode, cmd_plca_stat) has already returned,
+ * so CMD_PRINT(pCmdIO, ...) is not usable there directly. Every one of those
+ * commands funnels through this one shared state machine (LAN865X_DIAG_Busy()
+ * rejects a second request outright), so there is only ever one requester to
+ * remember at a time. NULL means the operation was started from boot/background
+ * code (e.g. the testmode auto-revert timer, far below), not a command -
+ * CMD_PRINT_OR_CONSOLE() then falls back to the serial console, same as every
+ * print here did before this existed. */
+static SYS_CMD_DEVICE_NODE *s_diag_pCmdIO = NULL;
 
 /* A write on its own only proves the TC6 transaction ran, not that the register kept the
  * value. These let a completed write chain into a verifying read of the same address, so
@@ -237,27 +250,27 @@ static void sqi_record_sample(uint32_t sts0) {
  * query and for the periodic auto-report armed by 'sqi report <seconds>'. */
 static void sqi_print_report(void) {
     if (!LAN865X_DIAG_SqiActive()) {
-        SYS_CONSOLE_PRINT("[SQI] not monitoring - 'sqi <node 0..254>' or 'sqi all' to start\n\r");
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[SQI] not monitoring - 'sqi <node 0..254>' or 'sqi all' to start\n\r");
         return;
     }
     if (s_sqi_toid == LAN865X_SQI_TOID_ALL) {
-        SYS_CONSOLE_PRINT("[SQI] node: all (weighted)   state: %s\n\r",
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[SQI] node: all (weighted)   state: %s\n\r",
                           (s_sqi_state == SQI_RUNNING) ? "running" : "starting");
     } else {
-        SYS_CONSOLE_PRINT("[SQI] node: %u   state: %s\n\r",
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[SQI] node: %u   state: %s\n\r",
                           (unsigned int)s_sqi_toid,
                           (s_sqi_state == SQI_RUNNING) ? "running" : "starting");
     }
     if (!s_sqi_have_val) {
-        SYS_CONSOLE_PRINT("[SQI] no valid sample yet - accumulation duration depends on traffic\n\r");
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[SQI] no valid sample yet - accumulation duration depends on traffic\n\r");
     } else {
-        SYS_CONSOLE_PRINT("[SQI] last: %s\n\r", sqi_val_name(s_sqi_last_val));
-        SYS_CONSOLE_PRINT("[SQI] min: %u   max: %u   samples: %u\n\r",
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[SQI] last: %s\n\r", sqi_val_name(s_sqi_last_val));
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[SQI] min: %u   max: %u   samples: %u\n\r",
                           (unsigned int)s_sqi_min_val, (unsigned int)s_sqi_max_val,
                           (unsigned int)s_sqi_samples);
     }
     if (s_sqi_errors > 0u) {
-        SYS_CONSOLE_PRINT("[SQI] errors: %u (last: %s)\n\r",
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[SQI] errors: %u (last: %s)\n\r",
                           (unsigned int)s_sqi_errors, sqi_errc_name(s_sqi_last_errc));
     }
 }
@@ -274,21 +287,21 @@ static void lan_plcastat_report(void) {
     uint32_t xcol     = s_plcastat_val[8] & 0xFFu;
     uint32_t cortxcnt = s_plcastat_val[9] & 0xFFFFu;
 
-    SYS_CONSOLE_PRINT("[PLCA] link: %s (PLCA_STS.PST=%u)\n\r",
+    CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[PLCA] link: %s (PLCA_STS.PST=%u)\n\r",
                       (plca_sts & 0x8000u) ? "in range" : "OUT OF RANGE",
                       (unsigned int)((plca_sts >> 15) & 0x1u));
     /* Datasheet-confirmed (11.5.16, see LAN865X_PRSSTS in the header): the coordinator's
      * configured TO count between BEACONs, not this node's own PLCA_CTRL1.NODE_CNT. */
-    SYS_CONSOLE_PRINT("[PLCA] coordinator cycle length: %u (PRSSTS.MAXID, may differ from our own NODE_CNT)\n\r",
+    CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[PLCA] coordinator cycle length: %u (PRSSTS.MAXID, may differ from our own NODE_CNT)\n\r",
                       (unsigned int)((prssts >> 8) & 0xFFu));
-    SYS_CONSOLE_PRINT("[PLCA] since last check: %lu transmit opportunities, %lu BEACONs\n\r",
+    CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[PLCA] since last check: %lu transmit opportunities, %lu BEACONs\n\r",
                       (unsigned long)tocnt, (unsigned long)bcncnt);
 
     /* Per datasheet (11.5.4) this is only accurate when exactly one unmasked STS1 bit is
      * set - our reports routinely show several at once, so treat this as a rough pointer,
      * not a reliable value, whenever more than one [PLCA] event line follows. */
     if ((sts3 & 0xFFu) != 0u) {
-        SYS_CONSOLE_PRINT("[PLCA] last transmit-opportunity event at ID %u (STS3.ERRTOID, unreliable if multiple events below)\n\r",
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[PLCA] last transmit-opportunity event at ID %u (STS3.ERRTOID, unreliable if multiple events below)\n\r",
                           (unsigned int)(sts3 & 0xFFu));
     }
 
@@ -296,10 +309,10 @@ static void lan_plcastat_report(void) {
      * include logical collisions due to normal operation of PLCA." A duplicate PLCA ID does
      * NOT set this - that shows up as RXINTO/UNEXPB below instead, confirmed on this bench. */
     if (sts1 & LAN865X_STS1_TXCOL) {
-        SYS_CONSOLE_PRINT("[PLCA] event: PHYSICAL TRANSMIT COLLISION (STS1.TXCOL) - not a PLCA addressing conflict, a real electrical-layer fault\n\r");
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[PLCA] event: PHYSICAL TRANSMIT COLLISION (STS1.TXCOL) - not a PLCA addressing conflict, a real electrical-layer fault\n\r");
     }
     if (xcol != 0u) {
-        SYS_CONSOLE_PRINT("[PLCA] excessive collisions since last check: %u (STATS10.XCOL - MAC-level, datasheet warns this can be confused by PLCA's own logical collisions)\n\r",
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[PLCA] excessive collisions since last check: %u (STATS10.XCOL - MAC-level, datasheet warns this can be confused by PLCA's own logical collisions)\n\r",
                           (unsigned int)xcol);
     }
     /* Datasheet section 7.3: the counter actually recommended for this purpose, immune to
@@ -307,36 +320,36 @@ static void lan_plcastat_report(void) {
      * properly configured and operating PLCA mixing segment, no transmit collisions should
      * be detected and the transmit collision counter should remain zero." */
     if (cortxcnt != 0u) {
-        SYS_CONSOLE_PRINT("[PLCA] corrupted transmissions since last check: %u (T1SPCSDIAG2.CORTXCNT - the datasheet-recommended physical collision counter)\n\r",
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[PLCA] corrupted transmissions since last check: %u (T1SPCSDIAG2.CORTXCNT - the datasheet-recommended physical collision counter)\n\r",
                           (unsigned int)cortxcnt);
     }
     if (sts1 & LAN865X_STS1_UNEXPB) {
-        SYS_CONSOLE_PRINT("[PLCA] event: unexpected BEACON received - check for a second coordinator\n\r");
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[PLCA] event: unexpected BEACON received - check for a second coordinator\n\r");
     }
     if (sts1 & LAN865X_STS1_BCNBFTO) {
-        SYS_CONSOLE_PRINT("[PLCA] event: BEACON received before our own transmit opportunity\n\r");
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[PLCA] event: BEACON received before our own transmit opportunity\n\r");
     }
     if (sts1 & LAN865X_STS1_RXINTO) {
-        SYS_CONSOLE_PRINT("[PLCA] event: frame received during our own transmit opportunity\n\r");
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[PLCA] event: frame received during our own transmit opportunity\n\r");
     }
     if (sts1 & LAN865X_STS1_EMPCYC) {
-        SYS_CONSOLE_PRINT("[PLCA] event: empty PLCA cycle - no node transmitted\n\r");
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[PLCA] event: empty PLCA cycle - no node transmitted\n\r");
     }
     /* Datasheet: ACMA-mode specific. We don't use ACMA on this project; unlikely to fire. */
     if (sts1 & LAN865X_STS1_UNCRS) {
-        SYS_CONSOLE_PRINT("[PLCA] event: unexpected carrier sense during ACMA time slot (STS1.UNCRS)\n\r");
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[PLCA] event: unexpected carrier sense during ACMA time slot (STS1.UNCRS)\n\r");
     }
     /* Datasheet: "detection of PLCA BEACON symbols when PLCA is not enabled... the local
      * node is operating with PLCA disabled on a segment with PLCA enabled nodes." Fires on
      * THIS node when PLCA is off locally but others on the segment run PLCA. */
     if (sts1 & LAN865X_STS1_PLCASYM) {
-        SYS_CONSOLE_PRINT("[PLCA] event: PLCA symbols detected while PLCA is disabled locally (STS1.PLCASYM)\n\r");
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[PLCA] event: PLCA symbols detected while PLCA is disabled locally (STS1.PLCASYM)\n\r");
     }
     if (sts1 & LAN865X_STS1_PSTC) {
-        SYS_CONSOLE_PRINT("[PLCA] event: PLCA status changed since last check\n\r");
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[PLCA] event: PLCA status changed since last check\n\r");
     }
     if ((sts1 & LAN865X_STS1_PLCA_MASK) == 0u) {
-        SYS_CONSOLE_PRINT("[PLCA] no PLCA event flags since last check\n\r");
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[PLCA] no PLCA event flags since last check\n\r");
     }
 }
 
@@ -433,20 +446,20 @@ bool LAN865X_DIAG_TestMode(uint32_t mode, uint32_t seconds) {
     s_op_initiated   = false;
     s_state          = LAN_WAIT_WRITE;
 
-    SYS_CONSOLE_PRINT("[TESTMODE] requesting %u - %s (T1STSTCTL=0x%08X)\n\r",
+    CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[TESTMODE] requesting %u - %s (T1STSTCTL=0x%08X)\n\r",
                       (unsigned int)mode, LAN865X_DIAG_TestModeName(mode), (unsigned int)s_value);
 
     if (mode == 0u) {
         s_revert_armed = false;
     } else {
-        SYS_CONSOLE_PRINT("[TESTMODE] the T1S link is down while this mode is active\n\r");
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[TESTMODE] the T1S link is down while this mode is active\n\r");
         if (seconds > 0u) {
             s_revert_tick  = SYS_TIME_Counter64Get() +
                              (uint64_t)seconds * (uint64_t)SYS_TIME_FrequencyGet();
             s_revert_armed = true;
-            SYS_CONSOLE_PRINT("[TESTMODE] auto-revert armed in %u s\n\r", (unsigned int)seconds);
+            CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[TESTMODE] auto-revert armed in %u s\n\r", (unsigned int)seconds);
         } else {
-            SYS_CONSOLE_PRINT("[TESTMODE] no timeout given - revert with 'testmode 0'\n\r");
+            CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[TESTMODE] no timeout given - revert with 'testmode 0'\n\r");
         }
     }
     return true;
@@ -498,7 +511,7 @@ bool LAN865X_DIAG_PlcaStat(void) {
         s_op_complete    = false;
         s_op_initiated   = false;
         s_state          = LAN_WAIT_RMW;
-        SYS_CONSOLE_PRINT("[PLCA] enabling transmit-opportunity/BEACON counters (one-time)\n\r");
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[PLCA] enabling transmit-opportunity/BEACON counters (one-time)\n\r");
     } else {
         s_plcastat_active = true;
         s_plcastat_idx    = 0u;
@@ -529,16 +542,16 @@ void LAN865X_DIAG_SqiStart(uint8_t toid) {
 
 void LAN865X_DIAG_SqiStop(void) {
     if (s_sqi_state == SQI_OFF) {
-        SYS_CONSOLE_PRINT("[SQI] already stopped\n\r");
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[SQI] already stopped\n\r");
         return;
     }
     s_sqi_state       = SQI_OFF;
     s_sqi_poll_inflt  = false;
     s_sqi_report_armed = false;
     if (LAN865X_DIAG_Rmw(LAN865X_SQICTL, LAN865X_SQICTL_SQIEN, 0u)) {
-        SYS_CONSOLE_PRINT("[SQI] monitoring stopped\n\r");
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[SQI] monitoring stopped\n\r");
     } else {
-        SYS_CONSOLE_PRINT("[SQI] polling stopped, but LAN busy - SQIEN NOT cleared "
+        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[SQI] polling stopped, but LAN busy - SQIEN NOT cleared "
                           "(retry 'sqi off' if that matters)\n\r");
     }
 }
@@ -580,9 +593,9 @@ static void sqi_tasks(void) {
             s_sqi_state     = SQI_RUNNING;
             s_sqi_next_poll = SYS_TIME_Counter64Get();   /* poll right away */
             if (s_sqi_toid == LAN865X_SQI_TOID_ALL) {
-                SYS_CONSOLE_PRINT("[SQI] monitoring all nodes (weighted) - 'sqi' shows the report\n\r");
+                CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[SQI] monitoring all nodes (weighted) - 'sqi' shows the report\n\r");
             } else {
-                SYS_CONSOLE_PRINT("[SQI] monitoring node %u - 'sqi' shows the report\n\r",
+                CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[SQI] monitoring node %u - 'sqi' shows the report\n\r",
                                   (unsigned int)s_sqi_toid);
             }
             break;
@@ -632,7 +645,7 @@ void LAN865X_DIAG_Tasks(void) {
                 if (!s_op_initiated) {
                     TCPIP_MAC_RES result = DRV_LAN865X_ReadRegister(0, s_addr, true, lan_read_callback, NULL);
                     if (result != TCPIP_MAC_RES_OK) {
-                        SYS_CONSOLE_PRINT("LAN865X Read failed to start: result=%d\n\r", result);
+                        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "LAN865X Read failed to start: result=%d\n\r", result);
                         lan_abort();
                     } else {
                         s_expire_tick = SYS_TIME_Counter64Get() + (uint64_t)LAN_TIMEOUT_MS * s_ticks_per_ms;
@@ -640,7 +653,7 @@ void LAN865X_DIAG_Tasks(void) {
                     }
                 } else {
                     if ((int64_t)(SYS_TIME_Counter64Get() - s_expire_tick) >= 0) {
-                        SYS_CONSOLE_PRINT("LAN865X Read timeout for addr=0x%08X\n\r", (unsigned int)s_addr);
+                        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "LAN865X Read timeout for addr=0x%08X\n\r", (unsigned int)s_addr);
                         lan_abort();
                     }
                 }
@@ -669,7 +682,7 @@ void LAN865X_DIAG_Tasks(void) {
                         lan_plcastat_report();
                     }
                 } else {
-                    SYS_CONSOLE_PRINT("[PLCA] stat read failed at addr=0x%08X - aborting\n\r",
+                    CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[PLCA] stat read failed at addr=0x%08X - aborting\n\r",
                                       (unsigned int)s_addr);
                     s_plcastat_active = false;
                     s_op_initiated    = false;
@@ -677,17 +690,17 @@ void LAN865X_DIAG_Tasks(void) {
                 }
             } else {
                 if (s_op_success) {
-                    SYS_CONSOLE_PRINT("LAN865X Read OK: Addr=0x%08X Value=0x%08X\n\r",
+                    CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "LAN865X Read OK: Addr=0x%08X Value=0x%08X\n\r",
                                       (unsigned int)s_addr, (unsigned int)s_read_value);
                     if (s_verify_pending) {
                         uint32_t got  = s_read_value    & s_verify_mask;
                         uint32_t want = s_verify_expect & s_verify_mask;
                         if (got == want) {
-                            SYS_CONSOLE_PRINT("[VERIFY] PASS addr=0x%08X masked=0x%08X (mask 0x%08X)\n\r",
+                            CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[VERIFY] PASS addr=0x%08X masked=0x%08X (mask 0x%08X)\n\r",
                                               (unsigned int)s_addr, (unsigned int)got,
                                               (unsigned int)s_verify_mask);
                         } else {
-                            SYS_CONSOLE_PRINT("[VERIFY] FAIL addr=0x%08X expected=0x%08X got=0x%08X (mask 0x%08X)\n\r",
+                            CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[VERIFY] FAIL addr=0x%08X expected=0x%08X got=0x%08X (mask 0x%08X)\n\r",
                                               (unsigned int)s_addr, (unsigned int)want,
                                               (unsigned int)got, (unsigned int)s_verify_mask);
                         }
@@ -697,13 +710,13 @@ void LAN865X_DIAG_Tasks(void) {
                      * bare 'lan_read 0x000308FB' or the 'testmode' query. */
                     if (s_addr == LAN865X_T1STSTCTL) {
                         uint32_t m = (s_read_value & LAN865X_T1STSTCTL_MASK) >> 13u;
-                        SYS_CONSOLE_PRINT("[TESTMODE] now %u - %s\n\r",
+                        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[TESTMODE] now %u - %s\n\r",
                                           (unsigned int)m, LAN865X_DIAG_TestModeName(m));
                     }
                 } else {
-                    SYS_CONSOLE_PRINT("LAN865X Read failed for addr=0x%08X\n\r", (unsigned int)s_addr);
+                    CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "LAN865X Read failed for addr=0x%08X\n\r", (unsigned int)s_addr);
                     if (s_verify_pending) {
-                        SYS_CONSOLE_PRINT("[VERIFY] FAIL addr=0x%08X - readback did not complete\n\r",
+                        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "[VERIFY] FAIL addr=0x%08X - readback did not complete\n\r",
                                           (unsigned int)s_addr);
                         s_verify_pending = false;
                     }
@@ -718,7 +731,7 @@ void LAN865X_DIAG_Tasks(void) {
                 if (!s_op_initiated) {
                     TCPIP_MAC_RES result = DRV_LAN865X_WriteRegister(0, s_addr, s_value, true, lan_write_callback, NULL);
                     if (result != TCPIP_MAC_RES_OK) {
-                        SYS_CONSOLE_PRINT("LAN865X Write failed to start: result=%d\n\r", result);
+                        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "LAN865X Write failed to start: result=%d\n\r", result);
                         lan_abort();
                     } else {
                         s_expire_tick = SYS_TIME_Counter64Get() + (uint64_t)LAN_TIMEOUT_MS * s_ticks_per_ms;
@@ -726,16 +739,16 @@ void LAN865X_DIAG_Tasks(void) {
                     }
                 } else {
                     if ((int64_t)(SYS_TIME_Counter64Get() - s_expire_tick) >= 0) {
-                        SYS_CONSOLE_PRINT("LAN865X Write timeout for addr=0x%08X\n\r", (unsigned int)s_addr);
+                        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "LAN865X Write timeout for addr=0x%08X\n\r", (unsigned int)s_addr);
                         lan_abort();
                     }
                 }
             } else {
                 if (s_op_success) {
-                    SYS_CONSOLE_PRINT("LAN865X Write OK: Addr=0x%08X Value=0x%08X\n\r",
+                    CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "LAN865X Write OK: Addr=0x%08X Value=0x%08X\n\r",
                                       (unsigned int)s_addr, (unsigned int)s_value);
                 } else {
-                    SYS_CONSOLE_PRINT("LAN865X Write failed for addr=0x%08X\n\r", (unsigned int)s_addr);
+                    CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "LAN865X Write failed for addr=0x%08X\n\r", (unsigned int)s_addr);
                     s_verify_armed = false;   /* nothing worth reading back */
                 }
                 s_op_initiated = false;
@@ -758,7 +771,7 @@ void LAN865X_DIAG_Tasks(void) {
                                                                                s_mask, true,
                                                                                lan_rmw_callback, NULL);
                     if (result != TCPIP_MAC_RES_OK) {
-                        SYS_CONSOLE_PRINT("LAN865X RMW failed to start: result=%d\n\r", result);
+                        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "LAN865X RMW failed to start: result=%d\n\r", result);
                         lan_abort();
                     } else {
                         s_expire_tick = SYS_TIME_Counter64Get() + (uint64_t)LAN_TIMEOUT_MS * s_ticks_per_ms;
@@ -766,7 +779,7 @@ void LAN865X_DIAG_Tasks(void) {
                     }
                 } else {
                     if ((int64_t)(SYS_TIME_Counter64Get() - s_expire_tick) >= 0) {
-                        SYS_CONSOLE_PRINT("LAN865X RMW timeout for addr=0x%08X\n\r", (unsigned int)s_addr);
+                        CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "LAN865X RMW timeout for addr=0x%08X\n\r", (unsigned int)s_addr);
                         lan_abort();
                     }
                 }
@@ -774,11 +787,11 @@ void LAN865X_DIAG_Tasks(void) {
                 if (s_op_success) {
                     /* s_rmw_final comes from lan_rmw_callback: the word the driver
                      * actually wrote back, not the previous read value. */
-                    SYS_CONSOLE_PRINT("LAN865X RMW OK: Addr=0x%08X Mask=0x%08X Value=0x%08X Final=0x%08X\n\r",
+                    CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "LAN865X RMW OK: Addr=0x%08X Mask=0x%08X Value=0x%08X Final=0x%08X\n\r",
                                       (unsigned int)s_addr, (unsigned int)s_mask,
                                       (unsigned int)s_value, (unsigned int)s_rmw_final);
                 } else {
-                    SYS_CONSOLE_PRINT("LAN865X RMW failed for addr=0x%08X\n\r", (unsigned int)s_addr);
+                    CMD_PRINT_OR_CONSOLE(s_diag_pCmdIO, "LAN865X RMW failed for addr=0x%08X\n\r", (unsigned int)s_addr);
                     s_verify_armed = false;
                 }
                 s_op_initiated = false;
@@ -810,6 +823,10 @@ void LAN865X_DIAG_Tasks(void) {
     if (s_revert_armed && (s_state == LAN_IDLE) &&
         ((int64_t)(SYS_TIME_Counter64Get() - s_revert_tick) >= 0)) {
         s_revert_armed = false;
+        /* Fires up to 600s after the command that armed it - whichever
+         * session that was may be long gone, so this (and the write
+         * completion it triggers below) goes to the serial console. */
+        s_diag_pCmdIO = NULL;
         SYS_CONSOLE_PRINT("[TESTMODE] auto-revert: restoring normal operation\n\r");
         s_addr           = LAN865X_T1STSTCTL;
         s_value          = 0u;
@@ -845,25 +862,27 @@ static const char *BUSY_MSG = "ERROR: Previous LAN operation still in progress\n
 /* LAN865X Register read command */
 static void cmd_lan_read(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
     if (argc != 2) {
-        SYS_CONSOLE_PRINT("Usage: lan_read <address_hex>\n\r");
-        SYS_CONSOLE_PRINT("Example: lan_read 0x00040000\n\r");
+        CMD_PRINT(pCmdIO, "Usage: lan_read <address_hex>\n\r");
+        CMD_PRINT(pCmdIO, "Example: lan_read 0x00040000\n\r");
         return;
     }
+    s_diag_pCmdIO = pCmdIO;
     if (!LAN865X_DIAG_Read((uint32_t)strtoul(argv[1], NULL, 0))) {
-        SYS_CONSOLE_PRINT("%s", BUSY_MSG);
+        CMD_PRINT(pCmdIO, "%s", BUSY_MSG);
     }
 }
 
 /* LAN865X Register write command */
 static void cmd_lan_write(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
     if (argc != 3) {
-        SYS_CONSOLE_PRINT("Usage: lan_write <address_hex> <value_hex>\n\r");
-        SYS_CONSOLE_PRINT("Example: lan_write 0x00040000 0x12345678\n\r");
+        CMD_PRINT(pCmdIO, "Usage: lan_write <address_hex> <value_hex>\n\r");
+        CMD_PRINT(pCmdIO, "Example: lan_write 0x00040000 0x12345678\n\r");
         return;
     }
+    s_diag_pCmdIO = pCmdIO;
     if (!LAN865X_DIAG_Write((uint32_t)strtoul(argv[1], NULL, 0),
                             (uint32_t)strtoul(argv[2], NULL, 0))) {
-        SYS_CONSOLE_PRINT("%s", BUSY_MSG);
+        CMD_PRINT(pCmdIO, "%s", BUSY_MSG);
     }
 }
 
@@ -874,15 +893,15 @@ static void cmd_lan_write(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
  * changed without the host having to read, combine and write the whole word. */
 static void cmd_lan_rmw(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
     if (argc != 4) {
-        SYS_CONSOLE_PRINT("Usage: lan_rmw <addr_hex> <mask_hex> <value_hex>\n\r");
-        SYS_CONSOLE_PRINT("       new = (old & ~mask) | value\n\r");
-        SYS_CONSOLE_PRINT("Example: lan_rmw 0x000308F9 0x00000001 0x00000001   (set LBE)\n\r");
-        SYS_CONSOLE_PRINT("Example: lan_rmw 0x000308F9 0x00000001 0x00000000   (clear LBE)\n\r");
+        CMD_PRINT(pCmdIO, "Usage: lan_rmw <addr_hex> <mask_hex> <value_hex>\n\r");
+        CMD_PRINT(pCmdIO, "       new = (old & ~mask) | value\n\r");
+        CMD_PRINT(pCmdIO, "Example: lan_rmw 0x000308F9 0x00000001 0x00000001   (set LBE)\n\r");
+        CMD_PRINT(pCmdIO, "Example: lan_rmw 0x000308F9 0x00000001 0x00000000   (clear LBE)\n\r");
         return;
     }
 
     if (LAN865X_DIAG_Busy()) {
-        SYS_CONSOLE_PRINT("%s", BUSY_MSG);
+        CMD_PRINT(pCmdIO, "%s", BUSY_MSG);
         return;
     }
 
@@ -891,15 +910,16 @@ static void cmd_lan_rmw(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
     uint32_t value = (uint32_t)strtoul(argv[3], NULL, 0);
 
     if (mask == 0u) {
-        SYS_CONSOLE_PRINT("lan_rmw: mask is 0 - nothing would change, use lan_write instead\n\r");
+        CMD_PRINT(pCmdIO, "lan_rmw: mask is 0 - nothing would change, use lan_write instead\n\r");
         return;
     }
     if ((value & ~mask) != 0u) {
-        SYS_CONSOLE_PRINT("lan_rmw: WARNING value has bits outside the mask (0x%08X); "
+        CMD_PRINT(pCmdIO, "lan_rmw: WARNING value has bits outside the mask (0x%08X); "
                           "the driver ORs them in regardless\n\r",
                           (unsigned int)(value & ~mask));
     }
 
+    s_diag_pCmdIO = pCmdIO;
     (void)LAN865X_DIAG_Rmw(addr, mask, value);
 }
 
@@ -910,21 +930,22 @@ static void cmd_lan_rmw(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
  * looking like a broken board later. */
 static void cmd_testmode(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
     if (LAN865X_DIAG_Busy()) {
-        SYS_CONSOLE_PRINT("%s", BUSY_MSG);
+        CMD_PRINT(pCmdIO, "%s", BUSY_MSG);
         return;
     }
 
     if (argc < 2) {
         /* Query only - the read path decodes T1STSTCTL by itself. */
+        s_diag_pCmdIO = pCmdIO;
         (void)LAN865X_DIAG_Read(LAN865X_T1STSTCTL);
         return;
     }
 
     uint32_t mode = (uint32_t)strtoul(argv[1], NULL, 0);
     if (mode > LAN865X_TESTMODE_MAX) {
-        SYS_CONSOLE_PRINT("Usage: testmode [0..%u] [seconds]\n\r", (unsigned int)LAN865X_TESTMODE_MAX);
-        SYS_CONSOLE_PRINT("  0 = normal, 1 = voltage/jitter, 2 = droop, 3 = PSD mask, 4 = TX high-Z\n\r");
-        SYS_CONSOLE_PRINT("  no argument = show the current mode\n\r");
+        CMD_PRINT(pCmdIO, "Usage: testmode [0..%u] [seconds]\n\r", (unsigned int)LAN865X_TESTMODE_MAX);
+        CMD_PRINT(pCmdIO, "  0 = normal, 1 = voltage/jitter, 2 = droop, 3 = PSD mask, 4 = TX high-Z\n\r");
+        CMD_PRINT(pCmdIO, "  no argument = show the current mode\n\r");
         return;
     }
 
@@ -932,11 +953,12 @@ static void cmd_testmode(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
     if (argc >= 3) {
         secs = (uint32_t)strtoul(argv[2], NULL, 0);
         if ((secs < 1u) || (secs > 600u)) {
-            SYS_CONSOLE_PRINT("testmode: seconds must be 1..600\n\r");
+            CMD_PRINT(pCmdIO, "testmode: seconds must be 1..600\n\r");
             return;
         }
     }
 
+    s_diag_pCmdIO = pCmdIO;
     (void)LAN865X_DIAG_TestMode(mode, secs);
 }
 
@@ -947,21 +969,27 @@ static void cmd_testmode(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
  * this is the register-level substitute for a bus analyzer or oscilloscope. */
 static void cmd_plca_stat(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv) {
     if (LAN865X_DIAG_Busy()) {
-        SYS_CONSOLE_PRINT("%s", BUSY_MSG);
+        CMD_PRINT(pCmdIO, "%s", BUSY_MSG);
         return;
     }
+    s_diag_pCmdIO = pCmdIO;
     (void)LAN865X_DIAG_PlcaStat();
 }
 
 static void cmd_plca_node(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv) {
     if (argc < 2) {
         /* No parameter: show the node id and node count last applied */
-        SYS_CONSOLE_PRINT("[PLCA] current node ID: %u (NODE_CNT=%u)\r\n",
+        CMD_PRINT(pCmdIO, "[PLCA] current node ID: %u (NODE_CNT=%u)\r\n",
                           (unsigned)s_plca_node_id, (unsigned)s_plca_node_cnt);
         return;
     }
     /* Live override (not persisted - use 'setenv plca_id'/'saveenv' for that). The
-     * node count is the one last applied, so the two stay consistent. */
+     * node count is the one last applied, so the two stay consistent.
+     * LAN865X_DIAG_ApplyPlca()'s own confirmation print stays on the serial
+     * console regardless of pCmdIO - see that function's comment (it is also
+     * called from env.c's boot-time env_apply(), which has no pCmdIO of its
+     * own to offer, and there is no reliable way here to tell those two
+     * callers apart on the far side of that shared function). */
     LAN865X_DIAG_ApplyPlca((uint8_t)strtoul(argv[1], NULL, 0), s_plca_node_cnt);
 }
 
@@ -977,6 +1005,8 @@ static void cmd_plca_node(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv) {
  * nothing is running yet); 'sqi report off' stops the auto-print without
  * necessarily stopping the monitoring itself - 'sqi off' stops both. */
 static void cmd_sqi(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
+    s_diag_pCmdIO = pCmdIO;   /* also the target for any periodic 'sqi report N' auto-print armed below */
+
     if (argc < 2) {
         sqi_print_report();
         return;
@@ -989,21 +1019,21 @@ static void cmd_sqi(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
 
     if (strcmp(argv[1], "report") == 0) {
         if (argc < 3) {
-            SYS_CONSOLE_PRINT("Usage: sqi report <seconds 1..3600>|off\n\r");
+            CMD_PRINT(pCmdIO, "Usage: sqi report <seconds 1..3600>|off\n\r");
             return;
         }
         if (strcmp(argv[2], "off") == 0) {
             if (s_sqi_report_armed) {
                 s_sqi_report_armed = false;
-                SYS_CONSOLE_PRINT("[SQI] auto-report stopped\n\r");
+                CMD_PRINT(pCmdIO, "[SQI] auto-report stopped\n\r");
             } else {
-                SYS_CONSOLE_PRINT("[SQI] auto-report already stopped\n\r");
+                CMD_PRINT(pCmdIO, "[SQI] auto-report already stopped\n\r");
             }
             return;
         }
         uint32_t secs = (uint32_t)strtoul(argv[2], NULL, 0);
         if ((secs < 1u) || (secs > 3600u)) {
-            SYS_CONSOLE_PRINT("sqi report: seconds must be 1..3600\n\r");
+            CMD_PRINT(pCmdIO, "sqi report: seconds must be 1..3600\n\r");
             return;
         }
         if (!LAN865X_DIAG_SqiActive()) {
@@ -1014,7 +1044,7 @@ static void cmd_sqi(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
         s_sqi_report_period_ticks = (uint64_t)secs * (uint64_t)SYS_TIME_FrequencyGet();
         s_sqi_report_next         = SYS_TIME_Counter64Get();   /* first report right away */
         s_sqi_report_armed        = true;
-        SYS_CONSOLE_PRINT("[SQI] auto-report every %u s armed\n\r", (unsigned int)secs);
+        CMD_PRINT(pCmdIO, "[SQI] auto-report every %u s armed\n\r", (unsigned int)secs);
         return;
     }
 
@@ -1024,31 +1054,31 @@ static void cmd_sqi(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
     } else {
         toid = strtoul(argv[1], NULL, 0);
         if (toid > 0xFEu) {
-            SYS_CONSOLE_PRINT("Usage: sqi [<node 0..254>|all|off]\n\r");
-            SYS_CONSOLE_PRINT("  no argument = show the accumulated report\n\r");
+            CMD_PRINT(pCmdIO, "Usage: sqi [<node 0..254>|all|off]\n\r");
+            CMD_PRINT(pCmdIO, "  no argument = show the accumulated report\n\r");
             return;
         }
     }
 
     LAN865X_DIAG_SqiStart((uint8_t)toid);
-    SYS_CONSOLE_PRINT("[SQI] starting - poll ~1x/s, give it a few seconds to accumulate\n\r");
+    CMD_PRINT(pCmdIO, "[SQI] starting - poll ~1x/s, give it a few seconds to accumulate\n\r");
 }
 
 static void cmd_lan_help(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
-    SYS_CONSOLE_PRINT("LAN865x diagnostics commands:\n\r");
-    SYS_CONSOLE_PRINT("  lan_read  <addr>             - Read  LAN865X register (hex address)\n\r");
-    SYS_CONSOLE_PRINT("  lan_write <addr> <value>     - Write LAN865X register (hex addr, hex value)\n\r");
-    SYS_CONSOLE_PRINT("  lan_rmw <addr> <mask> <val>  - Read-modify-write + verify: new=(old&~mask)|val\n\r");
-    SYS_CONSOLE_PRINT("  testmode [0..4] [seconds]    - IEEE TX test mode, verified by readback (no arg = show)\n\r");
-    SYS_CONSOLE_PRINT("  plca_node [id]               - Get/set PLCA node ID (no arg = show current)\n\r");
-    SYS_CONSOLE_PRINT("  plca_stat                    - PLCA bus health below IP-frame level (link/nodes/TO+BEACON counts/events)\n\r");
-    SYS_CONSOLE_PRINT("  sqi [node|all|off]           - Signal Quality Indicator, continuous (no arg = show report)\n\r");
-    SYS_CONSOLE_PRINT("  sqi report <sec>|off         - auto-print the sqi report every <sec> s, or stop doing so\n\r");
-    SYS_CONSOLE_PRINT("\n\rAddress = (MMS << 16) | offset. MMS 3 = PHY PMA/PMD, MMS 4 = vendor specific.\n\r");
-    SYS_CONSOLE_PRINT("Example: lan_read 0x0004CA02   (PLCA_CTRL1: NODE_CNT<<8 | NODE_ID)\n\r");
-    SYS_CONSOLE_PRINT("Example: testmode 1 30         (test mode 1, auto-revert after 30 s)\n\r");
-    SYS_CONSOLE_PRINT("Example: sqi all               (monitor all PLCA nodes, weighted average)\n\r");
-    SYS_CONSOLE_PRINT("Example: sqi report 5          (print the report every 5 s, starts monitoring if needed)\n\r");
+    CMD_PRINT(pCmdIO, "LAN865x diagnostics commands:\n\r");
+    CMD_PRINT(pCmdIO, "  lan_read  <addr>             - Read  LAN865X register (hex address)\n\r");
+    CMD_PRINT(pCmdIO, "  lan_write <addr> <value>     - Write LAN865X register (hex addr, hex value)\n\r");
+    CMD_PRINT(pCmdIO, "  lan_rmw <addr> <mask> <val>  - Read-modify-write + verify: new=(old&~mask)|val\n\r");
+    CMD_PRINT(pCmdIO, "  testmode [0..4] [seconds]    - IEEE TX test mode, verified by readback (no arg = show)\n\r");
+    CMD_PRINT(pCmdIO, "  plca_node [id]               - Get/set PLCA node ID (no arg = show current)\n\r");
+    CMD_PRINT(pCmdIO, "  plca_stat                    - PLCA bus health below IP-frame level (link/nodes/TO+BEACON counts/events)\n\r");
+    CMD_PRINT(pCmdIO, "  sqi [node|all|off]           - Signal Quality Indicator, continuous (no arg = show report)\n\r");
+    CMD_PRINT(pCmdIO, "  sqi report <sec>|off         - auto-print the sqi report every <sec> s, or stop doing so\n\r");
+    CMD_PRINT(pCmdIO, "\n\rAddress = (MMS << 16) | offset. MMS 3 = PHY PMA/PMD, MMS 4 = vendor specific.\n\r");
+    CMD_PRINT(pCmdIO, "Example: lan_read 0x0004CA02   (PLCA_CTRL1: NODE_CNT<<8 | NODE_ID)\n\r");
+    CMD_PRINT(pCmdIO, "Example: testmode 1 30         (test mode 1, auto-revert after 30 s)\n\r");
+    CMD_PRINT(pCmdIO, "Example: sqi all               (monitor all PLCA nodes, weighted average)\n\r");
+    CMD_PRINT(pCmdIO, "Example: sqi report 5          (print the report every 5 s, starts monitoring if needed)\n\r");
 }
 
 static const SYS_CMD_DESCRIPTOR lan_cmd_tbl[] = {

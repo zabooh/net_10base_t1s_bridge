@@ -16,6 +16,7 @@
 #include "config/default/library/tcpip/tcp.h"
 #include "system/command/sys_command.h"
 #include "testserver.h"
+#include "cmd_print.h"                                        /* CMD_PRINT/CMD_MSG - reply to pCmdIO, not always the serial console */
 
 #define TESTSERVER_DEFAULT_PORT   5566u
 #define TESTSERVER_CHUNK          512u    /* bytes per ArrayGet/ArrayPut round */
@@ -36,34 +37,34 @@ static uint8_t s_buf[TESTSERVER_CHUNK];
 static uint16_t s_pending_len = 0u;   /* bytes in s_buf awaiting TCPIP_TCP_ArrayPut() */
 static uint16_t s_pending_off = 0u;   /* how much of that has been queued so far */
 
-static void testserver_start(TCP_PORT port)
+static void testserver_start(SYS_CMD_DEVICE_NODE* pCmdIO, TCP_PORT port)
 {
     if (s_state != TESTSERVER_IDLE) {
-        SYS_CONSOLE_PRINT("testserver: already running on port %u\n\r", (unsigned)s_port);
+        CMD_PRINT(pCmdIO, "testserver: already running on port %u\n\r", (unsigned)s_port);
         return;
     }
     s_sock = TCPIP_TCP_ServerOpen(IP_ADDRESS_TYPE_IPV4, port, 0);
     if (s_sock == INVALID_SOCKET) {
-        SYS_CONSOLE_PRINT("testserver: TCPIP_TCP_ServerOpen failed\n\r");
+        CMD_PRINT(pCmdIO, "testserver: TCPIP_TCP_ServerOpen failed\n\r");
         return;
     }
     s_port = port;
     s_rx_bytes = 0u;
     s_tx_bytes = 0u;
     s_state = TESTSERVER_LISTEN;
-    SYS_CONSOLE_PRINT("testserver: listening on port %u\n\r", (unsigned)s_port);
+    CMD_PRINT(pCmdIO, "testserver: listening on port %u\n\r", (unsigned)s_port);
 }
 
-static void testserver_stop(void)
+static void testserver_stop(SYS_CMD_DEVICE_NODE* pCmdIO)
 {
     if (s_state == TESTSERVER_IDLE) {
-        SYS_CONSOLE_PRINT("testserver: not running\n\r");
+        CMD_PRINT(pCmdIO, "testserver: not running\n\r");
         return;
     }
     TCPIP_TCP_Close(s_sock);
     s_sock = INVALID_SOCKET;
     s_state = TESTSERVER_IDLE;
-    SYS_CONSOLE_PRINT("testserver: stopped (rx=%lu tx=%lu bytes)\n\r",
+    CMD_PRINT(pCmdIO, "testserver: stopped (rx=%lu tx=%lu bytes)\n\r",
                        (unsigned long)s_rx_bytes, (unsigned long)s_tx_bytes);
 }
 
@@ -170,26 +171,26 @@ static void cmd_testserver(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
     if (argc >= 2) {
         if (strcmp(argv[1], "start") == 0) {
             TCP_PORT port = (argc >= 3) ? (TCP_PORT)strtoul(argv[2], NULL, 0) : TESTSERVER_DEFAULT_PORT;
-            testserver_start(port);
+            testserver_start(pCmdIO, port);
             return;
         }
         if (strcmp(argv[1], "stop") == 0) {
-            testserver_stop();
+            testserver_stop(pCmdIO);
             return;
         }
-        SYS_CONSOLE_PRINT("usage: testserver [start [port]|stop]\n\r");
+        CMD_PRINT(pCmdIO, "usage: testserver [start [port]|stop]\n\r");
         return;
     }
 
     switch (s_state) {
     case TESTSERVER_IDLE:
-        SYS_CONSOLE_PRINT("testserver: idle\n\r");
+        CMD_PRINT(pCmdIO, "testserver: idle\n\r");
         break;
     case TESTSERVER_LISTEN:
-        SYS_CONSOLE_PRINT("testserver: listening on port %u, no client yet\n\r", (unsigned)s_port);
+        CMD_PRINT(pCmdIO, "testserver: listening on port %u, no client yet\n\r", (unsigned)s_port);
         break;
     case TESTSERVER_ECHO:
-        SYS_CONSOLE_PRINT("testserver: echoing on port %u (rx=%lu tx=%lu bytes)\n\r",
+        CMD_PRINT(pCmdIO, "testserver: echoing on port %u (rx=%lu tx=%lu bytes)\n\r",
                            (unsigned)s_port, (unsigned long)s_rx_bytes, (unsigned long)s_tx_bytes);
         break;
     default:

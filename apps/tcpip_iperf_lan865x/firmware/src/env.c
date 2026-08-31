@@ -32,6 +32,7 @@
 #include "lan865x_diag.h"                                    /* LAN865X_DIAG_ApplyPlca() */
 #include "port_mirror.h"                                     /* MIRROR_IsEnabled() for showenv */
 #include "env.h"
+#include "cmd_print.h"                                        /* CMD_PRINT/CMD_MSG - reply to pCmdIO, not always the serial console */
 
 /* The magic doubles as the ENVIRONMENT ID: it says which firmware variant wrote this
  * record, not just "this is an env record". It has to, because variants disagree about
@@ -356,17 +357,17 @@ bool    env_mirror(void)   { return s_env.mirror != 0u;      }
 bool    env_sniffer(void)  { return s_env.sniffer != 0u;     }
 
 /* --- CLI ------------------------------------------------------------------------ */
-static void pr_addr(const char *label, uint32_t val)
+static void pr_addr(SYS_CMD_DEVICE_NODE *pCmdIO, const char *label, uint32_t val)
 {
     char b[20]; IPV4_ADDR a; a.Val = val;
     (void)TCPIP_Helper_IPAddressToString(&a, b, sizeof b);
-    SYS_CONSOLE_PRINT("%s%s", label, b);
+    CMD_PRINT(pCmdIO, "%s%s", label, b);
 }
 
 static void cmd_showenv(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv)
 {
-    int i; (void)pCmdIO; (void)argc; (void)argv;
-    SYS_CONSOLE_PRINT("env (RAM shadow):\r\n");
+    int i; (void)argc; (void)argv;
+    CMD_PRINT(pCmdIO, "env (RAM shadow):\r\n");
     /* Identity first, and always the same shape, because a tool reads this line to decide
      * whether it may interpret the rest at all. "eeprom" is what was found at boot, not
      * what is in RAM now - after a rejected record those two differ, and that difference
@@ -375,36 +376,36 @@ static void cmd_showenv(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv)
         char found[5], mine[5];
         env_id_str(s_ee_id, found);
         env_id_str((uint32_t)ENV_MAGIC, mine);
-        SYS_CONSOLE_PRINT("  env   id %s  version %lu  crc %s  |  firmware id %s  version %lu  %s\r\n",
+        CMD_PRINT(pCmdIO, "  env   id %s  version %lu  crc %s  |  firmware id %s  version %lu  %s\r\n",
                           (s_ee_id != 0u) ? found : "none",
                           (unsigned long)s_ee_version,
                           s_ee_crc_ok ? "ok" : "BAD",
                           mine, (unsigned long)ENV_VERSION, ENV_VARIANT);
     }
     for (i = 0; i < ENV_IF_CNT; i++) {
-        SYS_CONSOLE_PRINT("  eth%d  ", i);
-        pr_addr("ip ",     s_env.ip[i]);
-        pr_addr("  mask ", s_env.mask[i]);
-        pr_addr("  gw ",   s_env.gw[i]);
-        pr_addr("  dns ",  s_env.dns[i]);
-        SYS_CONSOLE_PRINT("\r\n");
+        CMD_PRINT(pCmdIO, "  eth%d  ", i);
+        pr_addr(pCmdIO, "ip ",     s_env.ip[i]);
+        pr_addr(pCmdIO, "  mask ", s_env.mask[i]);
+        pr_addr(pCmdIO, "  gw ",   s_env.gw[i]);
+        pr_addr(pCmdIO, "  dns ",  s_env.dns[i]);
+        CMD_PRINT(pCmdIO, "\r\n");
     }
     {
         char mb[18];
-        env_mac_str(0, mb); SYS_CONSOLE_PRINT("  eth0  mac %s\r\n", mb);
-        env_mac_str(1, mb); SYS_CONSOLE_PRINT("  eth1  mac %s  (applied at boot)\r\n", mb);
+        env_mac_str(0, mb); CMD_PRINT(pCmdIO, "  eth0  mac %s\r\n", mb);
+        env_mac_str(1, mb); CMD_PRINT(pCmdIO, "  eth1  mac %s  (applied at boot)\r\n", mb);
     }
-    SYS_CONSOLE_PRINT("  plca  id %lu  count %lu  (eth0/T1S)\r\n",
+    CMD_PRINT(pCmdIO, "  plca  id %lu  count %lu  (eth0/T1S)\r\n",
                       (unsigned long)s_env.plca_id, (unsigned long)s_env.plca_cnt);
     /* Two states, because they can differ: what boots, and what is running now
      * ('mirror 1' is deliberately volatile). Showing only one would mislead. */
-    SYS_CONSOLE_PRINT("  mirror %s at boot  (now: %s)\r\n",
+    CMD_PRINT(pCmdIO, "  mirror %s at boot  (now: %s)\r\n",
                       (s_env.mirror != 0u) ? "ON " : "OFF",
                       MIRROR_IsEnabled() ? "ON" : "OFF");
-    SYS_CONSOLE_PRINT("  sniffer %s at boot  (now: %s)\r\n",
+    CMD_PRINT(pCmdIO, "  sniffer %s at boot  (now: %s)\r\n",
                       (s_env.sniffer != 0u) ? "ON " : "OFF",
                       SNIFFER_IsEnabled() ? "ON" : "OFF");
-    SYS_CONSOLE_PRINT("  (saveenv = persist+apply, readenv = reload, resetenv = defaults)\r\n");
+    CMD_PRINT(pCmdIO, "  (saveenv = persist+apply, readenv = reload, resetenv = defaults)\r\n");
 }
 
 static uint32_t *env_field(const char *key)
@@ -422,9 +423,9 @@ static uint32_t *env_field(const char *key)
 
 static void cmd_setenv(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv)
 {
-    uint32_t *fld; IPV4_ADDR a; (void)pCmdIO;
+    uint32_t *fld; IPV4_ADDR a;
     if (argc < 3) {
-        SYS_CONSOLE_PRINT("usage: setenv <key> <val>\r\n"
+        CMD_PRINT(pCmdIO, "usage: setenv <key> <val>\r\n"
                           "  IP keys:   ip0/mask0/gw0/dns0, ip1/mask1/gw1/dns1  (dotted-quad)\r\n"
                           "  MAC keys:  mac0, mac1  (XX:XX:XX:XX:XX:XX; applies after reset)\r\n"
                           "  PLCA keys: plca_id (0..254), plca_cnt (1..255)\r\n"
@@ -436,9 +437,9 @@ static void cmd_setenv(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv)
      * state stays with the 'mirror' command - same split as plca_node vs plca_id. */
     if (!strcmp(argv[1], "mirror")) {
         unsigned long v = strtoul(argv[2], NULL, 0);
-        if (v > 1u) { SYS_CONSOLE_PRINT("setenv: mirror must be 0 or 1\r\n"); return; }
+        if (v > 1u) { CMD_PRINT(pCmdIO, "setenv: mirror must be 0 or 1\r\n"); return; }
         s_env.mirror = (uint32_t)v;
-        SYS_CONSOLE_PRINT("setenv: mirror = %lu (RAM only; 'saveenv' to persist; "
+        CMD_PRINT(pCmdIO, "setenv: mirror = %lu (RAM only; 'saveenv' to persist; "
                           "takes effect at the next boot - use 'mirror %lu' to switch it now)\r\n",
                           v, v);
         return;
@@ -449,9 +450,9 @@ static void cmd_setenv(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv)
      * stays with the 'sniffer' command - same split as mirror/plca_id above. */
     if (!strcmp(argv[1], "sniffer")) {
         unsigned long v = strtoul(argv[2], NULL, 0);
-        if (v > 1u) { SYS_CONSOLE_PRINT("setenv: sniffer must be 0 or 1\r\n"); return; }
+        if (v > 1u) { CMD_PRINT(pCmdIO, "setenv: sniffer must be 0 or 1\r\n"); return; }
         s_env.sniffer = (uint32_t)v;
-        SYS_CONSOLE_PRINT("setenv: sniffer = %lu (RAM only; 'saveenv' to persist; "
+        CMD_PRINT(pCmdIO, "setenv: sniffer = %lu (RAM only; 'saveenv' to persist; "
                           "takes effect at the next boot - use 'sniffer %lu' to switch it now)\r\n",
                           v, v);
         return;
@@ -461,11 +462,11 @@ static void cmd_setenv(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv)
         int idx = (argv[1][3] == '1') ? 1 : 0;
         uint8_t m[6];
         if (!env_parse_mac(argv[2], m)) {
-            SYS_CONSOLE_PRINT("setenv: bad MAC '%s' (use XX:XX:XX:XX:XX:XX)\r\n", argv[2]);
+            CMD_PRINT(pCmdIO, "setenv: bad MAC '%s' (use XX:XX:XX:XX:XX:XX)\r\n", argv[2]);
             return;
         }
         memcpy(s_env.mac[idx], m, 6);
-        SYS_CONSOLE_PRINT("setenv: %s = %s (RAM only; 'saveenv' to persist; MAC applies after reset)\r\n",
+        CMD_PRINT(pCmdIO, "setenv: %s = %s (RAM only; 'saveenv' to persist; MAC applies after reset)\r\n",
                           argv[1], argv[2]);
         return;
     }
@@ -473,56 +474,56 @@ static void cmd_setenv(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv)
     if (!strcmp(argv[1], "plca_id") || !strcmp(argv[1], "plca_cnt")) {
         unsigned long v = strtoul(argv[2], NULL, 0);
         if (!strcmp(argv[1], "plca_id")) {
-            if (v > 254u) { SYS_CONSOLE_PRINT("setenv: plca_id range 0..254\r\n"); return; }
+            if (v > 254u) { CMD_PRINT(pCmdIO, "setenv: plca_id range 0..254\r\n"); return; }
             s_env.plca_id = (uint32_t)v;
         } else {
-            if (v < 1u || v > 255u) { SYS_CONSOLE_PRINT("setenv: plca_cnt range 1..255\r\n"); return; }
+            if (v < 1u || v > 255u) { CMD_PRINT(pCmdIO, "setenv: plca_cnt range 1..255\r\n"); return; }
             s_env.plca_cnt = (uint32_t)v;
         }
-        SYS_CONSOLE_PRINT("setenv: %s = %lu (RAM only; 'saveenv' to persist)\r\n", argv[1], v);
+        CMD_PRINT(pCmdIO, "setenv: %s = %lu (RAM only; 'saveenv' to persist)\r\n", argv[1], v);
         return;
     }
     fld = env_field(argv[1]);
-    if (fld == NULL) { SYS_CONSOLE_PRINT("setenv: unknown key '%s'\r\n", argv[1]); return; }
+    if (fld == NULL) { CMD_PRINT(pCmdIO, "setenv: unknown key '%s'\r\n", argv[1]); return; }
     a.Val = 0;
-    if (!TCPIP_Helper_StringToIPAddress(argv[2], &a)) { SYS_CONSOLE_PRINT("setenv: bad IP '%s'\r\n", argv[2]); return; }
+    if (!TCPIP_Helper_StringToIPAddress(argv[2], &a)) { CMD_PRINT(pCmdIO, "setenv: bad IP '%s'\r\n", argv[2]); return; }
     *fld = a.Val;
-    SYS_CONSOLE_PRINT("setenv: %s = %s (RAM only; 'saveenv' to persist)\r\n", argv[1], argv[2]);
+    CMD_PRINT(pCmdIO, "setenv: %s = %s (RAM only; 'saveenv' to persist)\r\n", argv[1], argv[2]);
 }
 
 static void cmd_saveenv(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv)
 {
-    (void)pCmdIO; (void)argc; (void)argv;
+    (void)argc; (void)argv;
     if (env_save()) {
         env_apply();
-        SYS_CONSOLE_PRINT("saveenv: persisted to EEPROM and applied "
+        CMD_PRINT(pCmdIO, "saveenv: persisted to EEPROM and applied "
                           "(an IP change drops the current connection).\r\n");
     } else {
-        SYS_CONSOLE_PRINT("saveenv: EEPROM write FAILED.\r\n");
+        CMD_PRINT(pCmdIO, "saveenv: EEPROM write FAILED.\r\n");
     }
 }
 
 static void cmd_readenv(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv)
 {
-    env_t tmp; (void)pCmdIO; (void)argc; (void)argv;
+    env_t tmp; (void)argc; (void)argv;
     if (env_read_valid(&tmp)) {
         s_env = tmp;
         env_apply();
-        SYS_CONSOLE_PRINT("readenv: reloaded from EEPROM and applied.\r\n");
+        CMD_PRINT(pCmdIO, "readenv: reloaded from EEPROM and applied.\r\n");
     } else {
-        SYS_CONSOLE_PRINT("readenv: no valid config in EEPROM.\r\n");
+        CMD_PRINT(pCmdIO, "readenv: no valid config in EEPROM.\r\n");
     }
 }
 
 static void cmd_resetenv(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv)
 {
-    (void)pCmdIO; (void)argc; (void)argv;
+    (void)argc; (void)argv;
     env_load_defaults(&s_env);
     if (env_save()) {
         env_apply();
-        SYS_CONSOLE_PRINT("resetenv: restored compiled defaults, persisted and applied.\r\n");
+        CMD_PRINT(pCmdIO, "resetenv: restored compiled defaults, persisted and applied.\r\n");
     } else {
-        SYS_CONSOLE_PRINT("resetenv: defaults applied but EEPROM write FAILED.\r\n");
+        CMD_PRINT(pCmdIO, "resetenv: defaults applied but EEPROM write FAILED.\r\n");
     }
 }
 
