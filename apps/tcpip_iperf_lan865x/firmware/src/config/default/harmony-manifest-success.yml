@@ -4,14 +4,14 @@
 
 
 project: tcpip_iperf_lan865x
-creation_date: 2026-08-31T17:54:44.825+02:00[Europe/Prague]    # ISO 8601 format: https://www.w3.org/TR/NOTE-datetime
+creation_date: 2026-02-17T11:40:32.160+01:00[Europe/Berlin]    # ISO 8601 format: https://www.w3.org/TR/NOTE-datetime
 operating_system: Windows 11
 mcc_mode: IDE            # [IDE|Standalone|Headless]
-mcc_version: v5.7.0
+mcc_version: v5.6.4
 mcc_core_version: v5.8.4
-mplabx_version: v6.35        # if MPLAB X plugin only
-harmony_version: v5.7.0
-compiler: XC32 5.10
+mplabx_version: v6.30        # if MPLAB X plugin only
+harmony_version: v5.6.4
+compiler: XC32 5.00
 
 modules:
     - {name: "csp", version: "v3.25.1"}

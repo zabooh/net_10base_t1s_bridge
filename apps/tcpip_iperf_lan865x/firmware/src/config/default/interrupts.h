@@ -67,7 +67,6 @@ void DMAC_0_InterruptHandler (void);
 void DMAC_1_InterruptHandler (void);
 void SERCOM0_SPI_InterruptHandler (void);
 void SERCOM1_USART_InterruptHandler (void);
-void GMAC_InterruptHandler (void);
 void TC0_TimerInterruptHandler (void);
 
 

@@ -22,8 +22,8 @@ data:
     - children:
       - attributes:
           id: drvExtMacLan865x
-          x: '641'
-          y: '17'
+          x: '537'
+          y: '99'
         type: ElementPosition
       type: ElementPositions
     type: ComponentGraph

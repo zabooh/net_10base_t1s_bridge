@@ -81,18 +81,11 @@ SYS_CMD_Tasks();
 
 
     /* Maintain Device Drivers */
-       DRV_MIIM_OBJECT_BASE_Default.miim_Tasks(sysObj.drvMiim_0);
-
-
-
+    
 
     /* Maintain Middleware & Other Libraries */
     
    TCPIP_STACK_Task(sysObj.tcpip);
-
-
-
-NET_PRES_Tasks(sysObj.netPres);
 
 
 

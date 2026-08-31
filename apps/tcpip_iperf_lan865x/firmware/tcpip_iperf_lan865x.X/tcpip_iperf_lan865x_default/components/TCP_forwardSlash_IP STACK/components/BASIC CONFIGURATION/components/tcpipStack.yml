@@ -24,7 +24,7 @@ data:
       - children:
         - attributes:
             id: tcpipStack
-            value: '60'
+            value: '35'
           type: Dynamic
         type: Values
       type: Integer
@@ -46,7 +46,7 @@ data:
       - children:
         - attributes:
             id: tcpipStack
-            value: '2'
+            value: '1'
           type: Dynamic
         type: Values
       type: Integer
@@ -108,7 +108,7 @@ data:
       - children:
         - attributes:
             id: tcpipStack
-            value: GMAC
+            value: ''
           type: Dynamic
         type: Values
       type: String
@@ -123,99 +123,4 @@ data:
           type: Dynamic
         type: Values
       type: String
-    TCPIP_STACK_MAC_CLOCK:
-      attributes:
-        id: TCPIP_STACK_MAC_CLOCK
-      children:
-      - children:
-        - attributes:
-            id: tcpipStack
-            value: '120000000'
-          type: Dynamic
-        type: Values
-      type: Integer
-    TCPIP_STACK_INTERRUPT_EN_IDX0:
-      attributes:
-        id: TCPIP_STACK_INTERRUPT_EN_IDX0
-      children:
-      - children:
-        - attributes:
-            id: tcpipStack
-            value: 'true'
-          type: Dynamic
-        type: Values
-      type: Boolean
-    TCPIP_STACK_INT_MAC_IDX1:
-      attributes:
-        id: TCPIP_STACK_INT_MAC_IDX1
-      children:
-      - children:
-        - attributes:
-            id: tcpipStack
-            value: 'true'
-          type: Dynamic
-        type: Values
-      type: Boolean
-    TCPIP_STACK_INTMAC_INTERFACE_NUM:
-      attributes:
-        id: TCPIP_STACK_INTMAC_INTERFACE_NUM
-      children:
-      - children:
-        - attributes:
-            id: tcpipStack
-            value: '1'
-          type: Dynamic
-        type: Values
-      type: Integer
-    TCPIP_STACK_MII_MODE_IDX1:
-      attributes:
-        id: TCPIP_STACK_MII_MODE_IDX1
-      children:
-      - children:
-        - attributes:
-            id: tcpipStack
-            value: RMII
-          type: Dynamic
-        type: Values
-      type: String
-    TCPIP_STACK_ALIAS_INTERFACE_SUPPORT:
-      attributes:
-        id: TCPIP_STACK_ALIAS_INTERFACE_SUPPORT
-      children:
-      - children:
-        - attributes:
-            value: 'true'
-          type: User
-        type: Values
-      type: Boolean
-    TCPIP_STACK_EXTERN_PACKET_PROCESS:
-      attributes:
-        id: TCPIP_STACK_EXTERN_PACKET_PROCESS
-      children:
-      - children:
-        - attributes:
-            value: 'true'
-          type: User
-        type: Values
-      type: Boolean
-    TCPIP_STACK_ENABLE_INIT_CALLBACK:
-      attributes:
-        id: TCPIP_STACK_ENABLE_INIT_CALLBACK
-      children:
-      - children:
-        - attributes:
-            value: 'true'
-          type: User
-        type: Values
-      type: Boolean
-    TCPIP_STACK_DRAM_SIZE:
-      attributes:
-        id: TCPIP_STACK_DRAM_SIZE
-      children:
-      - children:
-        - attributes:
-            value: '65535'
-          type: User
-        type: Values
-      type: Integer
   userData: {}

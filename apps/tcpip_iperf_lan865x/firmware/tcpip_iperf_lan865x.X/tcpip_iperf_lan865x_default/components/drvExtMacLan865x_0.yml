@@ -126,18 +126,8 @@ data:
       children:
       - children:
         - attributes:
-            value: '5'
+            value: '1'
           type: User
         type: Values
       type: Integer
-    DRV_LAN865X_PROMISCUOUS_IDX0:
-      attributes:
-        id: DRV_LAN865X_PROMISCUOUS_IDX0
-      children:
-      - children:
-        - attributes:
-            value: 'true'
-          type: User
-        type: Values
-      type: Boolean
   userData: {}

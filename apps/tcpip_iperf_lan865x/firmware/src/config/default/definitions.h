@@ -64,7 +64,6 @@
 #include "system/reset/sys_reset.h"
 #include "osal/osal.h"
 #include "system/debug/sys_debug.h"
-#include "driver/gmac/drv_gmac.h"
 #include "peripheral/sercom/usart/plib_sercom1_usart.h"
 #include "peripheral/sercom/spi_master/plib_sercom0_spi_master.h"
 #include "peripheral/evsys/plib_evsys.h"
@@ -74,17 +73,9 @@
 #include "peripheral/nvic/plib_nvic.h"
 #include "peripheral/dmac/plib_dmac.h"
 #include "peripheral/cmcc/plib_cmcc.h"
-#include "driver/miim/drv_miim.h"
 #include "wolfssl/wolfcrypt/port/pic32/crypt_wolfcryptcb.h"
-#include "net_pres/pres/net_pres.h"
-#include "net_pres/pres/net_pres_encryptionproviderapi.h"
-#include "net_pres/pres/net_pres_transportapi.h"
-#include "net_pres/pres/net_pres_socketapi.h"
 #include "system/console/sys_console.h"
 #include "system/console/src/sys_console_uart_definitions.h"
-#include "library/emulated_eeprom/emulated_eeprom.h"
-#include "driver/ethphy/drv_ethphy.h"
-#include "driver/ethphy/drv_extphy_lan8742a.h"
 #include "app.h"
 
 
@@ -231,14 +222,7 @@ typedef struct
     /* SPI0 Driver Object */
     SYS_MODULE_OBJ drvSPI0;
 
-   SYS_MODULE_OBJ  drvMiim_0;
-
     SYS_MODULE_OBJ  sysDebug;
-
-    SYS_MODULE_OBJ  netPres;
-
-    /* libEMULATED_EEPROM0 library Object */
-    SYS_MODULE_OBJ libEMULATED_EEPROM0;
 
 
 } SYSTEM_OBJECTS;

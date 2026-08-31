@@ -135,13 +135,13 @@ extern "C" {
 #define DRV_LAN865X_SPI_CS_IDX0              SYS_PORT_PIN_PC15
 #define DRV_LAN865X_INTERRUPT_PIN_IDX0       SYS_PORT_PIN_PC14
 #define DRV_LAN865X_RESET_PIN_IDX0           SYS_PORT_PIN_PC18
-#define DRV_LAN865X_PROMISCUOUS_IDX0         true
+#define DRV_LAN865X_PROMISCUOUS_IDX0         false
 #define DRV_LAN865X_TX_CUT_THROUGH_IDX0      true
 #define DRV_LAN865X_RX_CUT_THROUGH_IDX0      false
 #define DRV_LAN865X_CHUNK_SIZE_IDX0          64
 #define DRV_LAN865X_CHUNK_XACT_IDX0          31
 #define DRV_LAN865X_PLCA_ENABLE_IDX0         true
-#define DRV_LAN865X_PLCA_NODE_ID_IDX0        5
+#define DRV_LAN865X_PLCA_NODE_ID_IDX0        0
 #define DRV_LAN865X_PLCA_NODE_COUNT_IDX0     8
 #define DRV_LAN865X_PLCA_BURST_COUNT_IDX0    0
 #define DRV_LAN865X_PLCA_BURST_TIMER_IDX0    128
@@ -158,21 +158,6 @@ extern "C" {
 #define DRV_SPI_XMIT_DMA_CH_IDX0              SYS_DMA_CHANNEL_0
 #define DRV_SPI_RCV_DMA_CH_IDX0               SYS_DMA_CHANNEL_1
 #define DRV_SPI_QUEUE_SIZE_IDX0               1
-
-/*** MIIM Driver Configuration ***/
-#define DRV_MIIM_ETH_MODULE_ID_0                GMAC_BASE_ADDRESS
-#define DRV_MIIM_DRIVER_INDEX_0                 0
-#define DRV_MIIM_INSTANCES_NUMBER           1
-#define DRV_MIIM_INSTANCE_OPERATIONS        4
-#define DRV_MIIM_INSTANCE_CLIENTS           2
-#define DRV_MIIM_CLIENT_OP_PROTECTION   false
-#define DRV_MIIM_COMMANDS   false
-#define DRV_MIIM_DRIVER_OBJECT              DRV_MIIM_OBJECT_BASE_Default            
-
-
-
-/* Emulated EEPROM library instance 0 Configuration Options */
-#define EMULATED_EEPROM0                       0
 
 
 
@@ -238,8 +223,8 @@ extern "C" {
 #define TCPIP_TCP_TASK_TICK_RATE		        	5
 #define TCPIP_TCP_MSL_TIMEOUT		        	    0
 #define TCPIP_TCP_QUIET_TIME		        	    0
-#define TCPIP_TCP_COMMANDS   true
-#define TCPIP_TCP_EXTERN_PACKET_PROCESS   true
+#define TCPIP_TCP_COMMANDS   false
+#define TCPIP_TCP_EXTERN_PACKET_PROCESS   false
 #define TCPIP_TCP_DISABLE_CRYPTO_USAGE		        	    false
 
 
@@ -272,10 +257,10 @@ extern "C" {
 #define TCPIP_NETWORK_DEFAULT_HOST_NAME_IDX0              "MCHP_LAN865x"
 #define TCPIP_NETWORK_DEFAULT_MAC_ADDR_IDX0               "00:04:25:1C:A0:02"
 
-#define TCPIP_NETWORK_DEFAULT_IP_ADDRESS_IDX0         "192.168.0.11"
+#define TCPIP_NETWORK_DEFAULT_IP_ADDRESS_IDX0         "192.168.100.11"
 #define TCPIP_NETWORK_DEFAULT_IP_MASK_IDX0            "255.255.255.0"
-#define TCPIP_NETWORK_DEFAULT_GATEWAY_IDX0            "192.168.0.1"
-#define TCPIP_NETWORK_DEFAULT_DNS_IDX0                "192.168.0.1"
+#define TCPIP_NETWORK_DEFAULT_GATEWAY_IDX0            "192.168.100.1"
+#define TCPIP_NETWORK_DEFAULT_DNS_IDX0                "192.168.100.1"
 #define TCPIP_NETWORK_DEFAULT_SECOND_DNS_IDX0         "0.0.0.0"
 #define TCPIP_NETWORK_DEFAULT_POWER_MODE_IDX0         "full"
 #define TCPIP_NETWORK_DEFAULT_INTERFACE_FLAGS_IDX0            \
@@ -289,51 +274,6 @@ extern "C" {
 
 #define TCPIP_NETWORK_VLAN_ID_IDX0         0
 #define TCPIP_NETWORK_VLAN_PCP_IDX0         0
-
-
-
-/* Network Configuration Index 1 */
-#define TCPIP_NETWORK_DEFAULT_INTERFACE_NAME_IDX1 "GMAC"
-#define TCPIP_IF_GMAC  
-
-#define TCPIP_NETWORK_DEFAULT_HOST_NAME_IDX1              "MCHPBOARD_C"
-#define TCPIP_NETWORK_DEFAULT_MAC_ADDR_IDX1               "00:04:25:1C:A0:03"
-
-#define TCPIP_NETWORK_DEFAULT_IP_ADDRESS_IDX1         "192.168.0.12"
-#define TCPIP_NETWORK_DEFAULT_IP_MASK_IDX1            "255.255.255.0"
-#define TCPIP_NETWORK_DEFAULT_GATEWAY_IDX1            "192.168.0..1"
-#define TCPIP_NETWORK_DEFAULT_DNS_IDX1                "192.168.0.1"
-#define TCPIP_NETWORK_DEFAULT_SECOND_DNS_IDX1         "0.0.0.0"
-#define TCPIP_NETWORK_DEFAULT_POWER_MODE_IDX1         "full"
-#define TCPIP_NETWORK_DEFAULT_INTERFACE_FLAGS_IDX1            \
-                                                    TCPIP_NETWORK_CONFIG_DHCP_CLIENT_ON |\
-                                                    TCPIP_NETWORK_CONFIG_DNS_CLIENT_ON |\
-                                                    TCPIP_NETWORK_CONFIG_IP_STATIC
-                                                    
-#define TCPIP_NETWORK_DEFAULT_MAC_DRIVER_IDX1         DRV_GMAC_Object
-
-
-
-#define TCPIP_NETWORK_VLAN_ID_IDX1         0
-#define TCPIP_NETWORK_VLAN_PCP_IDX1         0
-
-
-
-/*** telnet Configuration ***/
-#define TCPIP_STACK_USE_TELNET_SERVER
-#define TCPIP_TELNET_MAX_CONNECTIONS    2
-#define TCPIP_TELNET_TASK_TICK_RATE     100
-#define TCPIP_TELNET_SKT_TX_BUFF_SIZE   3200
-#define TCPIP_TELNET_SKT_RX_BUFF_SIZE   0
-#define TCPIP_TELNET_LISTEN_PORT        23
-#define TCPIP_TELNET_PRINT_BUFF_SIZE    200
-#define TCPIP_TELNET_LINE_BUFF_SIZE     80
-#define TCPIP_TELNET_USERNAME_SIZE      15
-#define TCPIP_TELNET_CONFIG_FLAGS       \
-                                       TCPIP_TELNET_FLAG_NONE
-
-#define TCPIP_TELNET_OBSOLETE_AUTHENTICATION false
-#define TCPIP_TELNET_AUTHENTICATION_CONN_INFO true
 
 
 
@@ -363,7 +303,7 @@ extern "C" {
 
 /*** TCPIP Heap Configuration ***/
 #define TCPIP_STACK_USE_INTERNAL_HEAP
-#define TCPIP_STACK_DRAM_SIZE                       65535
+#define TCPIP_STACK_DRAM_SIZE                       39250
 #define TCPIP_STACK_DRAM_RUN_LIMIT                  2048
 
 #define TCPIP_STACK_MALLOC_FUNC                     malloc
@@ -397,7 +337,7 @@ extern "C" {
 #define TCPIP_STACK_SECURE_PORT_ENTRIES             10
 #define TCPIP_STACK_LINK_RATE		        		333
 
-#define TCPIP_STACK_ALIAS_INTERFACE_SUPPORT   true
+#define TCPIP_STACK_ALIAS_INTERFACE_SUPPORT   false
 
 #define TCPIP_STACK_VLAN_INTERFACE_SUPPORT   false
 
@@ -411,67 +351,12 @@ extern "C" {
 #define TCPIP_STACK_MAC_DOWN_OPERATION  true
 #define TCPIP_STACK_INTERFACE_CHANGE_SIGNALING   false
 #define TCPIP_STACK_CONFIGURATION_SAVE_RESTORE   true
-#define TCPIP_STACK_EXTERN_PACKET_PROCESS   true
+#define TCPIP_STACK_EXTERN_PACKET_PROCESS   false
 #define TCPIP_STACK_RUN_TIME_INIT   false
 
-#define TCPIP_STACK_INTMAC_COUNT           1
+#define TCPIP_STACK_INTMAC_COUNT           0
 
 
-
-
-
-/*** GMAC Configuration ***/
-#define DRV_GMAC
-#define DRV_SAME5x
-#define TCPIP_GMAC_TX_DESCRIPTORS_COUNT_DUMMY    1
-#define TCPIP_GMAC_RX_DESCRIPTORS_COUNT_DUMMY    1
-#define TCPIP_GMAC_RX_BUFF_SIZE_DUMMY            64
-#define TCPIP_GMAC_TX_BUFF_SIZE_DUMMY            64
-#define TCPIP_GMAC_QUEUE_0                                  true  
-/*** QUEUE 0 TX Configuration ***/
-#define TCPIP_GMAC_TX_DESCRIPTORS_COUNT_QUE0            8
-#define TCPIP_GMAC_MAX_TX_PKT_SIZE_QUE0                 1536
-/*** QUEUE 0 RX Configuration ***/
-#define TCPIP_GMAC_RX_DESCRIPTORS_COUNT_QUE0            8
-#define TCPIP_GMAC_RX_BUFF_SIZE_QUE0                    1536
-#define TCPIP_GMAC_RX_DEDICATED_BUFFERS_QUE0            8
-#define TCPIP_GMAC_RX_ADDL_BUFF_COUNT_QUE0              2
-#define TCPIP_GMAC_RX_BUFF_COUNT_THRESHOLD_QUE0         1
-#define TCPIP_GMAC_RX_BUFF_ALLOC_COUNT_QUE0             2
-#define TCPIP_GMAC_RX_FILTERS                       \
-                                                        TCPIP_MAC_RX_FILTER_TYPE_BCAST_ACCEPT |\
-                                                        TCPIP_MAC_RX_FILTER_TYPE_MCAST_ACCEPT |\
-                                                        TCPIP_MAC_RX_FILTER_TYPE_UCAST_ACCEPT |\
-                                                        TCPIP_MAC_RX_FILTER_TYPE_CRC_ERROR_REJECT |\
-                                                        TCPIP_MAC_RX_FILTER_TYPE_ALL_ACCEPT |\
-                                                          0
-       
-#define TCPIP_GMAC_SCREEN1_COUNT_QUE        0 
-#define TCPIP_GMAC_SCREEN2_COUNT_QUE        0  
-
-#define TCPIP_GMAC_ETH_OPEN_FLAGS                   \
-                                                        TCPIP_ETH_OPEN_AUTO |\
-                                                        TCPIP_ETH_OPEN_FDUPLEX |\
-                                                        TCPIP_ETH_OPEN_HDUPLEX |\
-                                                        TCPIP_ETH_OPEN_100 |\
-                                                        TCPIP_ETH_OPEN_10 |\
-                                                        TCPIP_ETH_OPEN_MDIX_AUTO |\
-                                                            TCPIP_ETH_OPEN_RMII |\
-                                                        0
-
-#define TCPIP_GMAC_MODULE_ID                       GMAC_BASE_ADDRESS
-
-#define TCPIP_INTMAC_PERIPHERAL_CLK                 120000000
-
-#define DRV_GMAC_RX_CHKSM_OFFLOAD               (TCPIP_MAC_CHECKSUM_NONE)           
-#define DRV_GMAC_TX_CHKSM_OFFLOAD               (TCPIP_MAC_CHECKSUM_NONE)       
-#define TCPIP_GMAC_TX_PRIO_COUNT                1
-#define TCPIP_GMAC_RX_PRIO_COUNT                1
-#define DRV_GMAC_NUMBER_OF_QUEUES               1
-#define DRV_GMAC_RMII_MODE                      0
-
-
-#define DRV_GMAC_MULTI_CLIENT        			false
 
 
 
@@ -536,54 +421,10 @@ extern "C" {
 #define NO_WOLFSSL_MEMORY
 // ---------- FUNCTIONAL CONFIGURATION END ----------
 
-/* MPLAB Harmony Net Presentation Layer Definitions*/
-#define NET_PRES_NUM_INSTANCE 1
-#define NET_PRES_NUM_SOCKETS 10
-#define NET_PRES_LOG_VERBOSE 0
-
-
-	
-
-#define TCPIP_STACK_NETWORK_INTERAFCE_COUNT  	2
+#define TCPIP_STACK_NETWORK_INTERAFCE_COUNT  	1
 
 
 
-/*** Bridge Configuration ***/
-#define TCPIP_STACK_USE_MAC_BRIDGE
-#define TCPIP_STACK_MAC_BRIDGE_COMMANDS true
-#define TCPIP_MAC_BRIDGE_FDB_TABLE_ENTRIES          17
-#define TCPIP_MAC_BRIDGE_MAX_PORTS_NO               2
-#define TCPIP_MAC_BRIDGE_PACKET_POOL_SIZE           8
-#define TCPIP_MAC_BRIDGE_PACKET_SIZE                1536
-#define TCPIP_MAC_BRIDGE_PACKET_POOL_REPLENISH      2
-#define TCPIP_MAC_BRIDGE_DCPT_POOL_SIZE             16
-#define TCPIP_MAC_BRIDGE_DCPT_POOL_REPLENISH        4
-/* Advanced */
-#define TCPIP_MAC_BRIDGE_ENTRY_TIMEOUT              300
-#define TCPIP_MAC_BRIDGE_MAX_TRANSIT_DELAY          1
-#define TCPIP_MAC_BRIDGE_TASK_RATE                  333
-
-#define TCPIP_MAC_BRIDGE_STATISTICS          		true
-#define TCPIP_MAC_BRIDGE_EVENT_NOTIFY          		true
-
-#define TCPIP_MAC_BRIDGE_IF_NAME_TABLE false
-
-#define TCPIP_MC_BRIDGE_INIT_FLAGS                  \
-                                                    0
-
-#define TCPIP_STACK_MAC_BRIDGE_DISABLE_GLUE_PORTS false
-
-
-#define DRV_LAN8742A_PHY_CONFIG_FLAGS       ( 0 \
-                                                    | DRV_ETHPHY_CFG_RMII \
-                                                    )
-                                                    
-#define DRV_LAN8742A_PHY_LINK_INIT_DELAY            500
-#define DRV_LAN8742A_PHY_ADDRESS                    0
-#define DRV_LAN8742A_PHY_PERIPHERAL_ID              GMAC_BASE_ADDRESS
-#define DRV_ETHPHY_LAN8742A_NEG_INIT_TMO            1
-#define DRV_ETHPHY_LAN8742A_NEG_DONE_TMO            2000
-#define DRV_ETHPHY_LAN8742A_RESET_CLR_TMO           500
 
 
 
