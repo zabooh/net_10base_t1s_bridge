@@ -13,6 +13,10 @@ python patches/apply_patches.py --check    # dry run - report only, nothing chan
 python patches/apply_patches.py            # apply whatever is missing
 ```
 
+Or, from Windows/Explorer/Git Bash, `patches\apply_patches.bat` (same arguments,
+reuses the sister project's `.venv` like `..\cli.bat`/`..\flash.bat` do, falls
+back to the bare `python` from PATH).
+
 Run `--check` first after every `Generate Code`. A clean report (`All patches
 present.`) means nothing to do. Anything else, apply for real, then rebuild and
 retest.
