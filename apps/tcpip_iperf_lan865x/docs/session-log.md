@@ -1908,6 +1908,30 @@ completed step — do not wait until the end of the session.
   already-understood, lower-severity limitation from the buffer-size sweep
   above.
 
+### Replaced the fixed 10ms dump pacing with the original precise busy-wait
+
+- User pushed back on the fixed-delay fix above: the sister project's
+  original `SYS_CONSOLE_WriteFreeBufferCountGet()` busy-wait was already
+  proven to work - why not use it instead of a blind per-line sleep that
+  penalizes every dump, including ones far too small to ever need it?
+- Realized `CmdDumpMem()` doesn't need to detect which transport `pCmdIO`
+  resolves to at all: the busy-wait only ever blocks on the **serial**
+  console's own ring buffer, which is idle whenever nothing else is
+  currently printing to it. For a Telnet-issued dump that check reports
+  "plenty of room" almost immediately in practice (nothing else is usually
+  writing to the serial port at the same time), so it adds no real delay
+  there; for a serial-issued dump it throttles exactly as precisely and
+  load-adaptively as it always did. Reverted `CmdDumpMem()` to reuse
+  `DumpMem()`'s exact original busy-wait (`SYS_CONSOLE_WriteFreeBufferCountGet(...)
+  < pos`) unconditionally, removed the fixed-delay helper (`app_wait_ms()`)
+  entirely - no longer needed anywhere.
+- **Verified**: serial `dump 0x20000000 800` still ends cleanly and
+  completely at `20000310: ...`, no corruption; the same Telnet sweep
+  (200/500/800 bytes + `netinfo`) still shows the identical, correct results
+  as with the fixed-delay version - `dump 500` complete, `dump 800` cleanly
+  truncated at the 3072-byte Telnet buffer boundary, `netinfo` complete -
+  now without any artificial per-line delay on small/Telnet dumps.
+
 ---
 
 <!-- Append new dated entries above this line as work continues. -->

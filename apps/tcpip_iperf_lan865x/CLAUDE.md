@@ -296,12 +296,20 @@ cli.bat --port COM8 --read 3 "reset"
   sowohl den seriellen 1024-Byte-Ringpuffer (`SERCOM1_USART_Write()` verwirft still,
   was nicht passt) als auch Telnets `F_Telnet_MSG()` (verwirft `NET_PRES_SocketWrite()`s
   Rückgabewert ebenso) — Resultat: nicht nur Abschnitt, sondern **korrumpierte,
-  ineinander verschachtelte Bytes** mitten in der Ausgabe. **Fix:** feste Pacing-Pause
-  (`app_wait_ms()`) nach jeder gedruckten Zeile statt einer Freiraum-Messung — 3 ms
-  reichte noch nicht (Korruption nur später), **10 ms** behebt es vollständig, seriell
-  wie über Telnet. **Verifiziert:** `dump 0x20000000 800` seriell jetzt exakt komplett
-  und sauber; über Telnet schneidet ein zu großer Dump jetzt nur noch sauber an der
-  Puffergrenze ab (siehe `TCPIP_TELNET_SKT_TX_BUFF_SIZE` oben), keine Korruption mehr.
+  ineinander verschachtelte Bytes** mitten in der Ausgabe.
+  **Erster Fix (verworfen):** feste 10ms-Pacing-Pause nach jeder Zeile — funktionierte,
+  bremste aber JEDEN Dump unnötig, auch viel zu kleine. **Besserer Fix (Nutzer-Idee:
+  „das Backpressure hatte im Schwesterprojekt schon funktioniert"):** die ORIGINALE
+  `SYS_CONSOLE_WriteFreeBufferCountGet()`-Busy-Wait aus `DumpMem()` unbedingt
+  wiederverwendet, ganz ohne Geräteerkennung — der Trick: diese Prüfung hängt nur vom
+  seriellen Ringpuffer ab, der bei einem Telnet-ausgelösten Dump praktisch immer frei
+  ist (nichts anderes schreibt gleichzeitig seriell), meldet dort also fast sofort
+  „genug Platz" und bremst faktisch nicht; bei einem seriell ausgelösten Dump greift
+  exakt dieselbe präzise, lastadaptive Drosselung wie zuvor. `app_wait_ms()` wieder
+  entfernt. **Verifiziert:** identische Ergebnisse wie mit der festen Pause (seriell
+  `dump 800` komplett und sauber; Telnet `dump 500` komplett, `dump 800` sauber an der
+  3072-Byte-Puffergrenze abgeschnitten, `netinfo` komplett) — jetzt ohne künstliche
+  Verzögerung bei kleinen/Telnet-Dumps.
 - **LAN865x-RX-Pfad hatte eine echte Race Condition — gefixt 2026-08-31 (siehe
   `docs/session-log.md` für die volle Herleitung).** Ursprünglicher Befund:
   `rxPkt->pDSeg->segLen` wich vom im IP-Header deklarierten Gesamtlängenwert ab, und zwar

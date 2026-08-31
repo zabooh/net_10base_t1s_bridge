@@ -448,45 +448,38 @@ static void my_dump(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
     }
 }
 
-/* Blocking millisecond wait on the SYS_TIME counter - same shape as
- * noip_wait_ms() in noip_test.c. */
-static void app_wait_ms(uint32_t ms)
-{
-    uint64_t start = SYS_TIME_Counter64Get();
-    uint64_t ticks = ((uint64_t)SYS_TIME_FrequencyGet() * (uint64_t)ms) / 1000ULL;
-    while ((SYS_TIME_Counter64Get() - start) < ticks) {
-    }
-}
-
 /* Same hex dump as DumpMem() above, but for the "dump" command itself: replies
  * to whichever device issued it (CMD_PRINT) instead of always the serial
  * console. Kept as a separate function rather than adding a pCmdIO parameter
  * to DumpMem() - that one is also called from the deferred packet-log drain
  * in APP_Tasks() (PKT_LOG_ETH1), which has no command context.
  *
- * Needs its OWN flow control, and can't reuse DumpMem()'s
- * SYS_CONSOLE_WriteFreeBufferCountGet() busy-wait: that call is specific to
- * the serial console's ring buffer, and the generic SYS_CMD_API (pCmdIO)
- * that also has to serve a Telnet connection exposes no equivalent "how much
- * room is left" query for either transport. Originally this function had NO
- * flow control at all - lost when it was split off from DumpMem() for the
- * Telnet console-routing fix (2026-08-31) - and a "dump" with enough bytes to
- * overrun the serial UART's 1024-byte TX ring buffer (SERCOM1_USART_Write()
- * silently drops whatever does not fit, see its own comment) or the Telnet
- * socket's TX buffer produced garbled, not just truncated, output: printing
- * into the reused per-print consolePrintBuffer while the previous line was
- * still only partially drained interleaved bytes from two different lines.
- * Root-caused 2026-08-31 (see docs/session-log.md).
+ * Reuses DumpMem()'s own SYS_CONSOLE_WriteFreeBufferCountGet() busy-wait
+ * UNCONDITIONALLY, even for a Telnet-issued dump, on purpose - not a mistake.
+ * Originally (2026-08-31, split off from DumpMem() for the Telnet
+ * console-routing fix) this function had no flow control at all, and a
+ * "dump" with enough bytes to overrun the serial UART's 1024-byte TX ring
+ * buffer (SERCOM1_USART_Write() silently drops whatever does not fit, see
+ * its own comment) produced garbled, not just truncated, serial output:
+ * printing into the reused per-print consolePrintBuffer while the previous
+ * line was still only partially drained interleaved bytes from two
+ * different lines. A fixed per-line pacing delay fixed the corruption but
+ * penalized every dump, including ones far too small to ever need it,
+ * because it cannot tell whether the wait is actually necessary.
  *
- * Fix: a fixed per-line pacing delay instead of measuring free space -
- * works the same way regardless of which transport pCmdIO resolves to.
- * 3 ms comfortably covers a ~80-byte line's serial drain time (115200 baud
- * needs under 1 ms for 80 bytes) with headroom for scheduling jitter; over
- * Telnet it is unnecessary once the TCP buffer covers the request (see
- * TCPIP_TELNET_SKT_TX_BUFF_SIZE) but harmless otherwise - a "dump" is a
- * diagnostic command, not a hot path. */
-#define CMD_DUMP_LINE_PACING_MS  10u
-
+ * The real fix needs no such guesswork and no pCmdIO-type detection either:
+ * this busy-wait only ever blocks on the SERIAL console's own ring buffer,
+ * which is a shared but effectively idle resource whenever nothing else is
+ * printing to it - so for a Telnet-issued dump it reports "plenty of room"
+ * almost immediately, in practice adding no delay, while a serial-issued
+ * dump gets exactly the correct, load-adaptive throttling this check was
+ * designed for. What Telnet output actually needs instead is enough buffer
+ * to hold the reply at all (see TCPIP_TELNET_SKT_TX_BUFF_SIZE) - once that
+ * is sized to cover it, Telnet dumps come back complete and, since
+ * F_Telnet_MSG()/NET_PRES_SocketWrite() never showed the serial path's
+ * interleaving failure mode in testing, cleanly truncated rather than
+ * garbled if a request still exceeds it. Root-caused and both stages
+ * verified 2026-08-31 (see docs/session-log.md). */
 static void CmdDumpMem(SYS_CMD_DEVICE_NODE *pCmdIO, uint32_t addr, uint32_t count)
 {
     uint8_t *puc = (uint8_t *) addr;
@@ -512,8 +505,12 @@ static void CmdDumpMem(SYS_CMD_DEVICE_NODE *pCmdIO, uint32_t addr, uint32_t coun
         ascii[lineBytes] = '\0';
         pos += snprintf(line + pos, sizeof(line) - (size_t)pos, "   %s\n\r", ascii);
 
+        while (SYS_CONSOLE_WriteFreeBufferCountGet(SYS_CONSOLE_DEFAULT_INSTANCE) < (ssize_t)pos) {
+            /* wait for the SERCOM TX interrupt to drain the ring buffer - see
+             * this function's own comment for why this is correct even for
+             * a Telnet-issued dump. */
+        }
         CMD_PRINT(pCmdIO, "%s", line);
-        app_wait_ms(CMD_DUMP_LINE_PACING_MS);
     }
 }
 
