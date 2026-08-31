@@ -35,11 +35,11 @@ import tkinter as tk
 from tkinter import scrolledtext, ttk
 from pathlib import Path
 
-# This project has no own .venv (see CLAUDE.md section 2): it reuses the sister
-# project t1s_100baset_bridge's .venv directly, where sv-ttk/pyserial/pyocd are
-# already installed - so this dialog should never actually fire here. Points at
-# that project's own setup script as the fallback repair path if it ever does.
-INSTALL_SCRIPT = Path(r"C:\work\t1s_bridge\bridge\t1s_100baset_bridge\batch\setup_venv.bat")
+# This project has its own .venv (see CLAUDE.md section 2 / setup.bat) -
+# sv-ttk/pyserial/pyocd normally end up there via setup.bat, so this dialog
+# should rarely fire. Points at this project's own setup_venv.bat as the
+# fallback repair path if it ever does.
+INSTALL_SCRIPT = Path(__file__).resolve().parent.parent / "batch" / "setup_venv.bat"
 
 
 def _missing(deps):

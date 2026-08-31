@@ -27,11 +27,10 @@
 :: ===========================================================================
 setlocal
 
-rem Reuses the sister project's .venv (sv-ttk + pyserial already installed
-rem there) instead of setting up a second one - same pattern as cli.bat/
+rem Uses this project's own .venv (see setup.bat) - same pattern as cli.bat/
 rem flash.bat/run_gui.bat. Falls back to the bare pythonw/python from PATH if
 rem that venv (or its pythonw.exe) is missing.
-set "VENV_DIR=C:\work\t1s_bridge\bridge\t1s_100baset_bridge\.venv\Scripts"
+set "VENV_DIR=%~dp0.venv\Scripts"
 set "PYW=%VENV_DIR%\pythonw.exe"
 set "PY=%VENV_DIR%\python.exe"
 if exist "%PYW%" goto :havepyw

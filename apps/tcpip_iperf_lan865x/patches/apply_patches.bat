@@ -6,14 +6,14 @@ rem
 rem  Usage:   apply_patches.bat            ... apply whatever is missing
 rem           apply_patches.bat --check    ... dry run, report only
 rem
-rem  Thin wrapper around apply_patches.py, reusing the sister project's .venv
-rem  (same pattern as ..\cli.bat/..\flash.bat) - falls back to the bare "python"
-rem  from PATH if that venv is not present on this machine. All arguments are
-rem  passed through as-is. See README.md for what this does and doesn't cover.
+rem  Thin wrapper around apply_patches.py, using this project's own .venv (see
+rem  ..\setup.bat) - same pattern as ..\cli.bat/..\flash.bat - falls back to
+rem  the bare "python" from PATH if it's missing. All arguments are passed
+rem  through as-is. See README.md for what this does and doesn't cover.
 rem ===========================================================================
 setlocal
 
-set "PY=C:\work\t1s_bridge\bridge\t1s_100baset_bridge\.venv\Scripts\python.exe"
+set "PY=%~dp0..\.venv\Scripts\python.exe"
 if not exist "%PY%" set "PY=python"
 
 "%PY%" "%~dp0apply_patches.py" %*

@@ -68,6 +68,7 @@ funktionierend), bevor spekuliert wird. Mehrfach Gold wert gewesen — siehe Abs
 ## 2. Bauen, Flashen, Konsole
 
 ```bat
+setup.bat                 :: einmalig pro Rechner, nach dem Klonen (venv, pyOCD, Debug-Fix, Makefiles)
 build.bat                 :: inkrementell (Default), TYPE_IMAGE=PRODUCTION
 build.bat rebuild         :: clean + full
 build.bat clean
@@ -83,10 +84,36 @@ cli.bat --port COM8 --read 3 "reset"
   `scripts\flash_same54.py` darunter — Ports aus dem Schwesterprojekt
   `t1s_100baset_bridge\build.bat`/`flash.bat`/`scripts\cli.py`/`scripts\flash_same54.py`,
   Pfade relativ auf `firmware\tcpip_iperf_lan865x.X` angepasst.
-- **Kein eigenes `.venv`** — `flash.bat`/`cli.bat` nutzen direkt
-  `C:\work\t1s_bridge\bridge\t1s_100baset_bridge\.venv\Scripts\python.exe` (dort sind
-  `pyserial`+`pyocd` schon installiert), Fallback auf globales `python`. Fragil, falls das
-  Schwesterprojekt verschoben/aufgeräumt wird — dann `setup.bat`-Mechanik von dort portieren.
+- **Eigene `.venv`** (seit 2026-08-31, `setup.bat`/`batch\setup_venv.bat`,
+  `scripts\requirements.txt`) — `flash.bat`/`cli.bat`/`run_gui.bat`/`run_gui_telnet.bat`/
+  `run_term.bat` nutzen `%~dp0.venv\Scripts\python(w).exe`, Fallback auf globales `python`.
+  Vorher zeigten diese Skripte fest auf die `.venv` des Schwesterprojekts — funktionierte,
+  war aber fragil, falls das Schwesterprojekt verschoben/aufgeräumt wird. Die gesamte
+  `setup.bat`/`install.bat`-Mechanik (venv, pyOCD/Probe-Auswahl über `bench.json`,
+  SAME54_DFP-Debug-Fix, `genmk.bat` für headless-Makefiles) wurde 1:1 vom Schwesterprojekt
+  portiert — **eine Ausnahme:** dessen `setup_compiler.py`/`setup_compiler.config`-Schritt
+  fehlt hier bewusst, weil sein einziger Konsument (`build_summary.py`) in diesem Projekt
+  nicht existiert.
+- **`genmk.bat` (headless `nbproject\Makefile-*.mk`-Generierung) funktioniert hier,
+  entgegen der älteren Notiz im projektübergreifenden MCC-Wissen** (dort stand: mehrfach
+  probiert, nie funktioniert, nur „einmal in der GUI öffnen und bauen" ging — bezog sich
+  aufs Schwesterprojekt, nicht auf dieses; beide Erfahrungen bleiben dokumentiert, nur an
+  unterschiedlichen Projekten gemessen). Am 2026-08-31 gegen dieses Projekt getestet, mit
+  einem echten Stolperer unterwegs: die vom Schwesterprojekt geportete Version hatte die
+  MPLAB-X-Version fest als Liste (`v6.25 v6.20 ...`) codiert — auf diesem Rechner sind
+  `v6.25` **und** `v6.35` installiert, die IDE nutzt `v6.35`, die Liste kannte nur bis
+  `v6.25` und wählte damit still die falsche (ältere) Version. Ergebnis: `rc=0`, keine
+  Fehlermeldung, aber `Makefile-local-default.mk` zeigte auf einen anderen DFP-Pack-Pfad
+  und eine andere Java-Version als der IDE-Build — genau die Art „silently wrong", vor der
+  die eigene Kopfzeile des Skripts eigentlich für `xc32-bin2hex` warnt, nur eine Ebene
+  höher. **Fix:** dieselbe dynamische Verzeichnis-Erkennung wie in `build.bat`
+  (`dir /b /ad /o-n "...\MPLABX\v*"`, neueste zuerst) statt der hartcodierten Liste.
+  Danach wählte der Generator `v6.35`, und `Makefile-local-default.mk` kam **byte-identisch**
+  zum IDE-erzeugten Original heraus; `Makefile-default.mk` unterschied sich nur noch in
+  den Flag-Hash-Suffixen (harmloses Rauschen, dieselbe Art wie bei MCC-Generate-Code-Diffs,
+  siehe oben) — keine Pfad-/Compiler-Abweichung mehr. Verifiziert per direktem Diff gegen
+  eine vor dem Test gesicherte Kopie der IDE-erzeugten Dateien, nicht per Build (kein
+  eigenmächtiger `build.bat`-Lauf, siehe Regel oben).
 - **Board-COM-Port: `COM8`** (EDBG-Seriennummer `...001049`) — bestätigt am 2026-08-30.
   Weitere an diesem Tisch hängende Probes: `COM10` (`...001290`), `COM23` (`...001103`),
   gehören zu anderen Boards.

@@ -10,9 +10,8 @@ rem           flash.bat --list           ... list connected probes
 rem           flash.bat --probe <serial> ... pick a probe for a single run
 rem
 rem  Ported from the sister project t1s_100baset_bridge's flash.bat/
-rem  flash_same54.py. Reuses that project's .venv (pyserial + pyocd already
-rem  installed there) instead of setting up a second one - falls back to the
-rem  bare "python" from PATH if that venv is not present on this machine.
+rem  flash_same54.py. Uses this project's own .venv (see setup.bat) -
+rem  falls back to the bare "python" from PATH if it's missing.
 rem
 rem  All further arguments are passed through to scripts\flash_same54.py.
 rem ===========================================================================
@@ -20,7 +19,7 @@ setlocal
 
 set "PROBE="
 
-set "PY=C:\work\t1s_bridge\bridge\t1s_100baset_bridge\.venv\Scripts\python.exe"
+set "PY=%~dp0.venv\Scripts\python.exe"
 if not exist "%PY%" set "PY=python"
 
 set "TOOL=%~dp0scripts\flash_same54.py"

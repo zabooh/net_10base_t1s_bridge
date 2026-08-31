@@ -3,3 +3,7 @@
 # commit it. Same convention as the sister project t1s_100baset_bridge/.gitignore.
 json/bench.json
 json/term_ports.json
+
+# Own Python virtual environment (see setup.bat / batch\setup_venv.bat) -
+# machine-specific, recreated by setup.bat on a fresh clone.
+.venv/

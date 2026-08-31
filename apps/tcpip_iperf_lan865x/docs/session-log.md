@@ -2100,4 +2100,63 @@ completed step — do not wait until the end of the session.
 
 ---
 
+### Ported setup.bat/install.bat from the sister project (own .venv)
+
+- User asked for the sister project's `setup.bat`/`install.bat` machine-setup
+  mechanism, closing the fragility gap noted in `CLAUDE.md` section 2 (this
+  project's scripts pointed at the sister project's `.venv` directly).
+- Scoping questions resolved before porting: own independent `.venv` (not
+  just a fallback repair path), and mirror all of the sister's setup steps
+  1:1 rather than a reduced subset.
+- Investigated actual file dependencies before copying anything: this
+  project's `flash_same54.py` already exposes the same `BENCH_PATH`/
+  `find_pack_dir`/`load_bench`/`save_bench` symbols the sister's
+  `install_prereqs.py` imports, and needs the same three packages
+  (`pyserial`, `pyocd`, `sv-ttk`) per an import scan of `scripts/*.py` -
+  `setup_venv.bat`, `install_prereqs.py`, `setup_debug.py`,
+  `requirements.txt` copy over verbatim, no project-specific references in
+  any of them.
+- Found one step with no purpose here: the sister's `setup_compiler.py`/
+  `setup_compiler.config` only feeds `build_summary.py`'s post-build
+  `xc32-nm` step, which this project doesn't have - dropped from `setup.bat`
+  (now 4 steps instead of 5) rather than ported as dead configuration.
+- `genmk.bat` (headless `nbproject\Makefile-*.mk` generation) - ported and
+  tested live against this project, since the project-independent MCC/Harmony
+  knowledge base had a *negative* finding from 2026-08-07 (headless
+  `prjMakefilesGenerator` never worked, only "open once in the IDE" did).
+  Backed up the existing IDE-generated `Makefile-*.mk` first. First run:
+  `rc=0`, no error, but wrong result - the ported version-selection used a
+  hardcoded MPLAB X version list (`v6.25 v6.20 ...`) that doesn't include
+  `v6.35`, which is what's actually installed here alongside `v6.25` and what
+  the IDE itself uses. It silently picked `v6.25` instead:
+  `Makefile-local-default.mk` came out pointing at a different DFP pack path
+  and Java version than the real IDE build - wrong in exactly the way the
+  script's own header comment warns about for `xc32-bin2hex`, one level up.
+  Restored the backup, fixed `genmk.bat` to use the same dynamic
+  newest-first directory scan `build.bat` already uses for `make.exe`
+  (`dir /b /ad /o-n ...\MPLABX\v*`) instead of the hardcoded list, re-ran:
+  picked `v6.35` correctly, `Makefile-local-default.mk` came out
+  byte-identical to the backed-up IDE original, `Makefile-default.mk`
+  differed only in per-file flag-hash suffixes (same harmless noise pattern
+  as the MCC Generate Code diffs earlier this session) - no path/compiler
+  difference left. Verified via diff against the backup, not via an actual
+  build (per the "user builds in MPLAB X" rule).
+- Documented the genmk.bat finding in both this project's `CLAUDE.md` and
+  the central, project-independent MCC-Harmony knowledge file (a hardcoded
+  MPLAB X version list anywhere is a latent bug the moment a newer version
+  is installed alongside an older one) - it's a generic lesson, not specific
+  to this project.
+- Repointed `flash.bat`, `cli.bat`, `run_gui.bat`, `run_gui_telnet.bat`,
+  `run_term.bat`, `patches/apply_patches.bat`, and `scripts/dep_check.py`'s
+  fallback-repair path from the sister project's hardcoded `.venv` path to
+  this project's own (`%~dp0.venv` / `Path(__file__)`-relative). Added
+  `.venv/` to this project's `.gitignore` (matches the sister project's
+  convention; `json/bench.json`/`json/term_ports.json` were already
+  ignored).
+- Deliberately did not run `setup.bat` itself (creates a real `.venv`,
+  installs packages from the network, and asks for probe selection against
+  real hardware) - left for the user to run.
+
+---
+
 <!-- Append new dated entries above this line as work continues. -->
