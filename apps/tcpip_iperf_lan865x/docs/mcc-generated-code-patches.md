@@ -37,11 +37,12 @@ grep -rn "TEMP DIAG"   firmware/src/config/default/
 | 4 | `initialization.c` — `TCPIP_HOSTS_CONFIGURATION[].macAddr` / `drvLan865xInitData[]` MAC+PLCA pre-seed | Persisted MAC addresses stop applying; brief wrong-PLCA-identity window returns | Medium — functional regression |
 | 5 | `driver\lan865x\src\dynamic\drv_lan865x_api.c` — `mirror_eth0_tx_hook()` call | `mirror`/`sniffer` stop capturing the bridge's own TX traffic | Low — feature regression, no crash |
 | 6 | `driver\lan865x\src\dynamic\drv_lan865x_api.c` + `library\tcpip\src\telnet.c` — `#include <stdarg.h>` | Build fails outright (`implicit declaration of function 'va_start'`) | **Critical — build blocker**, but easy to spot and re-add |
+| 7 | `system\command\src\sys_command.c` — CR NUL line-ending handling | Every Telnet command after the first one in a session silently fails ("Please type in a command") | High — correctness, Telnet-only |
 | — | `driver\lan865x\src\dynamic\tc6\tc6.c` + `drv_lan865x_api.c` — diagnostic prints | Loses an in-progress debugging aid, nothing else | None (temporary, currently disabled) |
 
 Recommended re-apply order after any `Generate Code` run: **1 first** (nothing else
 matters if the board can't boot), then rebuild/flash/confirm it boots at all, then
-**2–5** in any order, rebuild/flash/retest once more. **6** will simply fail to
+**2–5, 7** in any order, rebuild/flash/retest once more. **6** will simply fail to
 compile if missed, so the build itself catches it — no separate verification needed.
 
 ---
@@ -354,6 +355,42 @@ Seen twice in this project:
 offending file. Impossible to miss; just re-add the include and rebuild. **After any
 regenerate that touches either file, check first** — this is the cheapest patch on
 this list to verify and the most likely to silently disappear again.
+
+---
+
+## 7. `system\command\src\sys_command.c` — CR NUL line-ending handling
+
+**Why:** RFC 854 allows a telnet client to terminate a line with CR followed by
+either LF or NUL, and real clients use both - TeraTerm sends CR NUL for Enter,
+confirmed byte-for-byte with a live capture on `tcp port 23`
+(`0d 00`, never `0d 0a`). The MCC-generated character-input state machine
+(`RunCmdTask()`) only recognizes `'\r'`/`'\n'` as end-of-line; a bare `'\0'`
+fell through to the generic "valid char; insert and echo it back" branch and
+got silently prepended to the *next* command's `cmdBuff`. Every later
+`ParseCmdBuffer()` call then `strncpy()`/tokenized a C string whose first byte
+was `'\0'` - looks empty to every string function even though real text
+follows it - so the command was always parsed as empty (`argc == 0`,
+"Please type in a command"). The very first command in a session, typed into
+a still-clean buffer, was unaffected - only every one after it failed. No MCC
+GUI field controls telnet line-ending handling.
+
+**What:** one new branch in the character-processing state machine, right
+after the existing `\r`/`\n` case and before the generic character-insert
+case:
+```c
+else if(newCh == '\0')
+{
+    return;   /* CR NUL line ending (RFC 854) - discard, not text */
+}
+```
+
+**If lost:** Telnet becomes unusable beyond the very first command of each
+session - every later command silently fails with "Please type in a command"
+even though it was typed and echoed correctly. The serial console is
+unaffected (its line editor never sees a NUL byte from a physical terminal).
+**Root-caused and fixed 2026-08-31** (see `docs/session-log.md`) - verified
+both with a synthetic two-consecutive-commands reproduction over a raw socket
+and live in TeraTerm.
 
 ---
 

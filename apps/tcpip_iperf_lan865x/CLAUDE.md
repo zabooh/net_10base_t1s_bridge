@@ -238,6 +238,39 @@ cli.bat --port COM8 --read 3 "reset"
   abgelehnt. **Fix:** Registrierung nach `APP_STATE_SERVICE_TASKS` verschoben, direkt hinter
   `MIRROR_Initialize()`. **Verifiziert** per rohem Python-Socket-Test plus paralleler
   `tshark`-Aufnahme auf `tcp port 23`: `Logged in successfully` statt `Access denied`.
+- **Telnet-Kommandos wurden nie erkannt ("Please type in a command" bei jeder Zeile) —
+  gefixt 2026-08-31.** TeraTerm sendet jedes Zeichen einzeln und Enter als **`0d 00`
+  (CR NUL)**, nicht CR LF (per `tshark`-Mitschnitt auf `tcp port 23` bestätigt, RFC 854
+  erlaubt beides). `sys_command.c`s (MCC-generierter) Zeicheneditor (`RunCmdTask()`)
+  kennt nur `\r`/`\n` als Zeilenende — das nachfolgende NUL-Byte fiel in den
+  generischen "Zeichen einfügen"-Zweig und landete als führendes Byte im NÄCHSTEN
+  Kommandopuffer. `strncpy()`/String-Funktionen sehen einen mit `\0` beginnenden
+  String als leer an, selbst wenn danach echter Text folgt — deshalb funktioniert das
+  jeweils erste Kommando einer Sitzung, jedes weitere schlägt fehl. **Fix
+  (dokumentierte Ausnahme, `sys_command.c`):** neuer `else if (newCh == '\0')`-Zweig
+  direkt nach der `\r`/`\n`-Behandlung, der das Byte einfach verwirft.
+  `patches/sys_command.patch` neu erzeugt (Tool deckt jetzt 5 Dateien ab).
+  **Verifiziert:** zwei aufeinanderfolgende zeichenweise `"help"`-Eingaben über einen
+  rohen Socket sowie live in TeraTerm — beide funktionieren jetzt zuverlässig.
+- **Alle eigenen Kommandos antworteten über Telnet ins Leere — gefixt 2026-08-31.**
+  Direkte Folge des Login-Fixes: Kommandos wurden jetzt geparst, aber ihre Ausgabe
+  landete immer auf der seriellen Konsole, nie im Telnet-Client. Ursache: alle sechs
+  eigenen Modul-Dateien (`env.c`, `app.c`, `port_mirror.c`, `lan865x_diag.c`,
+  `noip_test.c`, `testserver.c`) benutzten `SYS_CONSOLE_PRINT()` (fest auf
+  `SYS_CONSOLE_DEFAULT_INSTANCE`, d.h. immer seriell) statt des `pCmdIO`, den jeder
+  `SYS_CMD_FNC`-Handler bekommt — 231 Fundstellen. **Fix:** neuer Header
+  `firmware/src/cmd_print.h` mit `CMD_PRINT(pCmdIO, ...)`/`CMD_MSG(pCmdIO, str)`
+  (Wrapper um `pCmdIO->pCmdApi->print/msg`), alle Kommando-Antworten in allen sechs
+  Dateien umgestellt; Boot-/Hintergrund-Logs (kein Kommando-Kontext, z. B.
+  `APP_Tasks()`s Paket-Log-Drain, `TESTSERVER_Tasks()`s Connect/Disconnect-Meldungen)
+  bewusst unverändert auf `SYS_CONSOLE_PRINT` gelassen. Für `lan865x_diag.c`s
+  asynchrone Register-Operationen (Ergebnis kommt erst später aus
+  `LAN865X_DIAG_Tasks()`, nach Rückkehr des Kommando-Handlers) zusätzlich
+  `CMD_PRINT_OR_CONSOLE(pCmdIO, ...)` plus ein gemerktes `s_diag_pCmdIO` (sicher, weil
+  das Modul ohnehin nur eine Operation gleichzeitig zulässt, `LAN865X_DIAG_Busy()`).
+  **Verifiziert** über echten Telnet-Socket: `showenv`/`stats`/`meminfo`/`mirror`/
+  `lanhelp` UND die beiden asynchronen Fälle `lan_read`/`plca_stat` (inkl. verketteter
+  RMW+Multi-Step-Read-Sequenz) liefern jetzt korrekt über Telnet.
 - **LAN865x-RX-Pfad hatte eine echte Race Condition — gefixt 2026-08-31 (siehe
   `docs/session-log.md` für die volle Herleitung).** Ursprünglicher Befund:
   `rxPkt->pDSeg->segLen` wich vom im IP-Header deklarierten Gesamtlängenwert ab, und zwar

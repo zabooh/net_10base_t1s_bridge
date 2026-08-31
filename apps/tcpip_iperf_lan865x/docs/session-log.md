@@ -1734,6 +1734,122 @@ completed step — do not wait until the end of the session.
   listing instead of `Access denied`, confirmed both in the script's own output
   and in a fresh `tshark` capture of the exchange on the wire.
 
+### Fixed Telnet commands never being recognized ("Please type in a command" on every line)
+
+- Follow-up to the Telnet login fix: user reported that after logging in,
+  every typed command (even `help`) got "*** Command Processor: Please type
+  in a command***" instead of running. Reproduced with a raw-socket Python
+  test sending a whole line at once (`b"help\r\n"`) - that worked fine, so
+  the bug needed a live capture to pin down. Captured the real TeraTerm
+  session on `tcp port 23` from the moment of connection: TeraTerm sends
+  each keystroke as its own TCP segment, and sends Enter as **`0d 00`
+  (CR NUL)**, not CR LF - confirmed byte-for-byte in the capture (`tcp.payload
+  == 0d00` on every Enter press, both for the username/password lines, which
+  worked, and for the `help` line, which didn't).
+- **Root cause**: `sys_command.c`'s (MCC-generated) character-input state
+  machine (`RunCmdTask()`) handles `'\r'`/`'\n'` as end-of-line, but has no
+  case for a bare `'\0'` - RFC 854 allows CR to be followed by LF *or* NUL,
+  and TeraTerm uses the NUL form. The trailing NUL byte fell through to the
+  generic "valid char; insert and echo it back" branch and got silently
+  prepended to the *next* command's `cmdBuff`. Every later `ParseCmdBuffer()`
+  call then did `strncpy()`/tokenized a C string whose first byte was `'\0'`
+  - looks like an empty string to every string function even though real
+  text follows it - so `argc` was always 0 and every command after the very
+  first one in a session failed, while the very first one (typed into a
+  still-clean buffer) worked. Reproduced synthetically once the real cause
+  was known: two consecutive char-by-char `"help\r\x00"` sequences over a raw
+  socket - the first succeeded, the second and every one after failed,
+  matching the live TeraTerm symptom exactly.
+- **Fix** (documented hand-patch exception, `sys_command.c` - see
+  `docs/mcc-generated-code-patches.md`): added an explicit `else if (newCh ==
+  '\0')` branch right after the `\r`/`\n` case that simply discards the byte
+  instead of falling through to the character-insert branch. Regenerated
+  `patches/sys_command.patch` from this change (`patches/apply_patches.py`
+  now covers five hand-patched files, up from four).
+- **Verified**: the same two-consecutive-`"help"` synthetic reproduction now
+  shows all three attempts succeeding (previously only the first); confirmed
+  live in TeraTerm by the user as well.
+
+### Fixed all custom commands replying to the wrong console over Telnet
+
+- User reported that after the Telnet login fix, typing commands worked (echoed
+  correctly, parsed correctly) but their actual OUTPUT never appeared in
+  TeraTerm - it went to the serial console instead. Confirmed directly:
+  `showenv` over a raw Telnet socket echoed the command and produced nothing
+  but an empty prompt.
+- **Root cause**: every one of this project's own command modules (`env.c`,
+  `app.c`, `port_mirror.c`, `lan865x_diag.c`, `noip_test.c`, `testserver.c`)
+  used `SYS_CONSOLE_PRINT()` for a command's reply. That macro always targets
+  `SYS_CONSOLE_DEFAULT_INSTANCE` - the fixed serial console - regardless of
+  which device actually issued the command. Every `SYS_CMD_FNC` handler is
+  passed a `pCmdIO` (`SYS_CMD_DEVICE_NODE*`) specifically so it can reply to
+  the right one via `pCmdIO->pCmdApi->print/msg`, but none of the ported code
+  used it - 231 `SYS_CONSOLE_PRINT` call sites across the six files, all
+  silently hardcoded to serial.
+- **Fix**: added `firmware/src/cmd_print.h` (`CMD_PRINT(pCmdIO, ...)` /
+  `CMD_MSG(pCmdIO, str)`, thin wrappers around `pCmdIO->pCmdApi->print/msg`)
+  and went through all six files converting every command-reply print site,
+  file by file, building after each to catch mistakes early:
+  - `env.c` (5 commands: showenv/setenv/saveenv/readenv/resetenv) and its
+    `pr_addr()` helper (threaded `pCmdIO` through).
+  - `app.c` (11 commands: test_help/cmd_stats/show_timestamp/cmd_uptime/
+    cmd_logclear/cmd_logstat/my_dump/cmd_mem_dump/cmd_mem_peek/cmd_mem_poke/
+    cmd_meminfo). `DumpMem()` itself was left untouched (also used by the
+    deferred packet-log drain in `APP_Tasks()`, which has no command context
+    and legitimately stays on serial, throttled against
+    `SYS_CONSOLE_WriteFreeBufferCountGet()` - no telnet equivalent exists for
+    that check) - added a parallel `CmdDumpMem(pCmdIO, ...)` for the actual
+    `dump` command instead of giving the shared one a signature change.
+  - `port_mirror.c` (cmd_mirror/cmd_sniffer/cmd_bigframe, plus
+    `mirror_print_dbg_counters()` threaded with `pCmdIO`).
+  - `noip_test.c` (cmd_noip_send/cmd_noip_stat; `NOIP_PrintRxLine()` left as
+    serial-only background RX logging).
+  - `testserver.c` (cmd_testserver; threaded `pCmdIO` through
+    `testserver_start()`/`testserver_stop()`, its only two callers, both
+    inside `cmd_testserver` - `TESTSERVER_Tasks()`'s own connect/disconnect
+    logging stays serial-only, genuinely async with no command context).
+  - `lan865x_diag.c` (the largest: 8 commands, 96 print sites). Its register
+    operations are asynchronous by design (queued over SPI, completed later
+    from `LAN865X_DIAG_Tasks()`, well after the command handler that started
+    them has already returned) - `CMD_PRINT(pCmdIO, ...)` is not usable
+    there directly. Added a second helper to `cmd_print.h`,
+    `CMD_PRINT_OR_CONSOLE(pCmdIO, ...)` (prints to `pCmdIO` if non-NULL, else
+    falls back to `SYS_CONSOLE_PRINT`), plus one module-static
+    `s_diag_pCmdIO` in `lan865x_diag.c` remembering who started the currently
+    pending operation - safe because the module already only ever allows one
+    operation in flight at a time (`LAN865X_DIAG_Busy()`). Each command sets
+    `s_diag_pCmdIO = pCmdIO` before triggering its operation;
+    `LAN865X_DIAG_Tasks()`'s completion prints (read/write/rmw OK/failed/
+    timeout, verify pass/fail, testmode decode, the whole chained
+    `plca_stat` sequence, `sqi`'s report) use `CMD_PRINT_OR_CONSOLE()` with
+    it. Two things deliberately left on `s_diag_pCmdIO = NULL` (serial-only):
+    the `testmode` auto-revert timer (fires up to 600s later - whichever
+    session armed it may be long gone) explicitly clears it first, and
+    `LAN865X_DIAG_ApplyPlca()` was left as plain `SYS_CONSOLE_PRINT`
+    throughout (it is called both from `cmd_plca_node`, a command, and from
+    `env.c`'s boot-time `env_apply()`, which has no `pCmdIO` to offer and
+    lives in a different translation unit - no reliable way to tell the two
+    callers apart on the far side of one shared function without a larger,
+    not-done-here change to thread `pCmdIO` through `env_apply()` itself).
+- **Verified end-to-end** over a real Telnet session (raw socket, admin/
+  password login): `showenv`, `stats`, `meminfo`, `mirror`, and `lanhelp` all
+  now print their real output over Telnet instead of an empty prompt: and,
+  the harder case, the two genuinely asynchronous diagnostics also came back
+  correctly - `lan_read 0x000308F9` showed the real
+  "LAN865X Read OK: Addr=... Value=..." completion line, and `plca_stat`
+  showed its full chained RMW-then-multi-step-read report, both arriving on
+  the Telnet socket that asked for them.
+- Hit one unrelated tooling snag while editing `lan865x_diag.c`: a Python
+  script used to do a large scoped find-and-replace (`open(path,
+  encoding='utf-8')` in text mode, no `newline=''` on the read side) silently
+  normalized the whole file from CRLF to LF on write. Caught it from git's
+  own "LF will be replaced by CRLF" warning before committing; fixed by
+  re-reading the file in binary mode and converting back to CRLF explicitly.
+  Worth remembering for next time: when editing a CRLF file with Python,
+  either edit as bytes throughout, or open text-mode with `newline=''` on
+  *both* the read and the write to preserve whatever line endings were
+  already there.
+
 ---
 
 <!-- Append new dated entries above this line as work continues. -->
