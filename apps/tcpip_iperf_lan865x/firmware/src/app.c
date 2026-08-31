@@ -44,6 +44,7 @@
 #include "noip_test.h"
 #include "testserver.h"
 #include "cmd_print.h"          /* CMD_PRINT/CMD_MSG - reply to pCmdIO, not always the serial console */
+#include "definitions.h"        /* sysObj - only for APP_PumpNetworkStack(), see its comment */
 
 // *****************************************************************************
 // *****************************************************************************
@@ -473,13 +474,40 @@ static void my_dump(SYS_CMD_DEVICE_NODE* pCmdIO, int argc, char** argv) {
  * printing to it - so for a Telnet-issued dump it reports "plenty of room"
  * almost immediately, in practice adding no delay, while a serial-issued
  * dump gets exactly the correct, load-adaptive throttling this check was
- * designed for. What Telnet output actually needs instead is enough buffer
- * to hold the reply at all (see TCPIP_TELNET_SKT_TX_BUFF_SIZE) - once that
- * is sized to cover it, Telnet dumps come back complete and, since
- * F_Telnet_MSG()/NET_PRES_SocketWrite() never showed the serial path's
- * interleaving failure mode in testing, cleanly truncated rather than
- * garbled if a request still exceeds it. Root-caused and both stages
- * verified 2026-08-31 (see docs/session-log.md). */
+ * designed for.
+ *
+ * Telnet output's OWN correctness does not come from this check at all - it
+ * comes from F_Telnet_MSG() (telnet.c, HAND-PATCH), which as of 2026-08-31
+ * retries on NET_PRES_SocketWrite()'s actual return value instead of
+ * discarding it, so a Telnet dump completes correctly regardless of size
+ * (verified up to 39554 bytes / dump 32000), not just up to whatever
+ * TCPIP_TELNET_SKT_TX_BUFF_SIZE happens to be. This busy-wait staying
+ * transport-blind is still the right call, not an oversight: it is a no-op
+ * for Telnet either way, so there is nothing to gain from teaching it about
+ * pCmdIO's transport. Root-caused and all stages verified 2026-08-31 (see
+ * docs/session-log.md). */
+/* Lets telnet.c's F_Telnet_MSG() (HAND-PATCH, see that file) actually make
+ * progress while it busy-waits for TX space, instead of just spinning.
+ *
+ * Root cause this works around: in this bare-metal, single-superloop build,
+ * SYS_CMD_Tasks() - which is what runs a command handler like CmdDumpMem()
+ * and, through it, F_Telnet_MSG() - is called BEFORE TCPIP_STACK_Task() and
+ * NET_PRES_Tasks() in SYS_Tasks() (see config/default/tasks.c). Nothing else
+ * in the loop can drain a Telnet socket's TX buffer until those two run, so a
+ * plain busy-wait inside F_Telnet_MSG() (tried and measured 2026-08-31: still
+ * truncated, and up to 6.6s slower for no gain) always burns its full timeout
+ * waiting for a drain that can never happen without this call. Calling the
+ * pump directly is safe here specifically because F_Telnet_MSG() is only ever
+ * reached via the SYS_CMD_API .msg/.print callback (confirmed: no other
+ * caller in telnet.c) - i.e. only from SYS_CMD_Tasks()'s call chain, which is
+ * a sibling of TCPIP_STACK_Task() in SYS_Tasks(), never nested inside it. So
+ * this is an out-of-turn extra call, not a reentrant one. */
+void APP_PumpNetworkStack(void)
+{
+    TCPIP_STACK_Task(sysObj.tcpip);
+    NET_PRES_Tasks(sysObj.netPres);
+}
+
 static void CmdDumpMem(SYS_CMD_DEVICE_NODE *pCmdIO, uint32_t addr, uint32_t count)
 {
     uint8_t *puc = (uint8_t *) addr;

@@ -310,6 +310,58 @@ cli.bat --port COM8 --read 3 "reset"
   `dump 800` komplett und sauber; Telnet `dump 500` komplett, `dump 800` sauber an der
   3072-Byte-Puffergrenze abgeschnitten, `netinfo` komplett) — jetzt ohne künstliche
   Verzögerung bei kleinen/Telnet-Dumps.
+- **Echtes Telnet-Backpressure in `F_Telnet_MSG()` — gefixt 2026-08-31.** Der obige
+  Fix umgeht das Puffer-Limit nur, deckt es nicht ab: Ausgaben über
+  `TCPIP_TELNET_SKT_TX_BUFF_SIZE` (3072 Byte) hinweg blieben abgeschnitten.
+  Erster Versuch — ein begrenztes Busy-Wait auf `NET_PRES_SocketWriteIsReady()`,
+  auch mit zusätzlichem `NET_PRES_SocketFlush()` — brachte **nichts** (`dump 800`
+  weiterhin nur ~3080 von ~4011 Byte, dafür 6,6s statt praktisch sofort). Ursache:
+  in diesem Bare-Metal-Single-Superloop-Aufbau läuft `SYS_CMD_Tasks()` — das ruft
+  den Kommando-Handler und darüber `F_Telnet_MSG()` — in `SYS_Tasks()`
+  (`config/default/tasks.c`) **vor** `TCPIP_STACK_Task()`/`NET_PRES_Tasks()`.
+  Nichts leert den Telnet-Sende-Puffer, solange diese beiden nicht laufen — anders
+  als beim UART, wo eine Hardware-Interrupt unabhängig vom Hauptloop weiterläuft.
+  Nutzerfrage „wäre es möglich, während des Wartens `SYS_Tasks()` aufzurufen?" —
+  Antwort: nicht die ganze Funktion (würde rekursiv in `SYS_CMD_Tasks()` selbst
+  — den gerade aktiven Stackframe mit eigenem statischem Parser-Zustand — und in
+  `APP_Tasks()` hineinlaufen), aber genau die zwei relevanten Aufrufe sind aus
+  `F_Telnet_MSG()` heraus nie reentrant (diese Funktion wird ausschließlich über
+  die `SYS_CMD_API` `.msg`/`.print`-Callbacks erreicht, also nur aus
+  `SYS_CMD_Tasks()`, einem Geschwister von `TCPIP_STACK_Task()` in `SYS_Tasks()`,
+  nie darin verschachtelt). Neue `APP_PumpNetworkStack()` (`app.c`/`app.h`) kapselt
+  `TCPIP_STACK_Task(sysObj.tcpip)` + `NET_PRES_Tasks(sysObj.netPres)`;
+  `F_Telnet_MSG()`s Busy-Wait ruft sie statt nur zu spinnen. **Verifiziert:**
+  `dump 800/2000/4000/8000` alle vollständig (4011/9938/19813/39554 Byte) in
+  konstant ~1,8–2,2s statt Abbruch bei ~3072 Byte; `netinfo` ebenfalls vollständig.
+  Neuer Hand-Patch `patches/telnet.patch`, Details:
+  `docs/mcc-generated-code-patches.md` Punkt 8.
+- **Nachtrag: `F_Telnet_MSG()` korrumpierte große Dumps weiterhin intermittierend
+  — gefixt 2026-08-31.** Nutzer-Test mit `dump 0x20000000 32000` zeigte:
+  gelegentlich (nicht bei jedem Lauf — ein Timing-Race, keine feste
+  Größengrenze) fehlte das Ende einer Zeile (z. B. nur 9 statt 16 ASCII-Punkte)
+  und die **nächste** Zeilenadresse hing direkt ohne `\n\r` dran —
+  Byte-Gesamtzahl variierte bei jedem Lauf (158020/158029/157993/158065/158212).
+  Auf Nutzerwunsch per `tshark`-Mitschnitt (`follow,tcp,raw`) gegengeprüft: der
+  Draht zeigt denselben Inhalt wie der Python-Client, kein Client-Artefakt —
+  dieser eine Mitschnitt-Lauf lief zufällig sauber durch, was zur
+  Race-Condition-These passt (ein deterministischer Fehler wäre jedes Mal
+  gleich aufgetreten). Ursache: `NET_PRES_SocketWriteIsReady()`s Vorab-Prüfung
+  sagt nicht zuverlässig voraus, was ein einzelner `NET_PRES_SocketWrite()`-
+  Aufruf tatsächlich annimmt — der Rückgabewert wurde trotzdem verworfen,
+  dieselbe „fire and forget"-Bugklasse wie beim seriellen
+  `SERCOM1_USART_Write()`, nur intermittierend statt konsistent. Gefixt durch
+  Schleife über den echten Rückgabewert: Rest erneut schreiben, dazwischen
+  `APP_PumpNetworkStack()`, begrenzt durchs bestehende 500ms-Timeout.
+  Nutzerfrage, ob `CmdDumpMem()`s eigener serieller Busy-Wait
+  (`SYS_CONSOLE_WriteFreeBufferCountGet(...) < pos`) jetzt „auch für UART und
+  Telnet funktionieren sollte" — Antwort: tut er bereits, aus zwei
+  verschiedenen Gründen (serielle Drossel bei UART, harmloses Sofort-Weiter
+  bei Telnet, da die echte Telnet-Korrektheit jetzt komplett in
+  `F_Telnet_MSG()` liegt) — der zugehörige Kommentar in `app.c` war veraltet
+  (behauptete fälschlich, Korrektheit käme von der Puffergröße
+  `TCPIP_TELNET_SKT_TX_BUFF_SIZE`) und wurde korrigiert. **Verifiziert:**
+  `dump 0x20000000 32000` 5× hintereinander, alle 5 Läufe exakt 158065 Byte,
+  keine verklebten Zeilen mehr — vorher bei jedem Lauf unterschiedlich.
 - **LAN865x-RX-Pfad hatte eine echte Race Condition — gefixt 2026-08-31 (siehe
   `docs/session-log.md` für die volle Herleitung).** Ursprünglicher Befund:
   `rxPkt->pDSeg->segLen` wich vom im IP-Header deklarierten Gesamtlängenwert ab, und zwar

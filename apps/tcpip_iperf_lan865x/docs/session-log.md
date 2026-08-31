@@ -1932,6 +1932,95 @@ completed step — do not wait until the end of the session.
   truncated at the 3072-byte Telnet buffer boundary, `netinfo` complete -
   now without any artificial per-line delay on small/Telnet dumps.
 
+### Real Telnet-side backpressure in `F_Telnet_MSG()`
+
+- User asked whether Telnet genuinely has no way to check free TX buffer
+  space (the excuse behind the previous fix, which only worked by borrowing
+  the serial console's idle busy-wait). Checked: `NET_PRES_SocketWriteIsReady()`
+  does exist and is already used elsewhere in `telnet.c` (login/banner code)
+  - `F_Telnet_MSG()` (the command-output path) just never called it.
+- First attempt: bounded busy-wait on `NET_PRES_SocketWriteIsReady()`
+  (500ms), later also adding `NET_PRES_SocketFlush()` per the login code's
+  pattern. Built, flashed, tested with `dump 800/2000/4000` over Telnet -
+  **did not work**: 3075-3093 of ~4011 bytes needed, 6.6s instead of
+  near-instant, `dump 4000` returned 0 bytes.
+- Root-caused: in this bare-metal, single-superloop build, `SYS_CMD_Tasks()`
+  - which runs the command handler that calls `F_Telnet_MSG()` - executes
+  *before* `TCPIP_STACK_Task()`/`NET_PRES_Tasks()` in `SYS_Tasks()`
+  (`config/default/tasks.c`). Nothing drains a Telnet socket's TX buffer
+  until those two run, so a bare busy-wait (with or without a manual flush)
+  just burns its timeout waiting on a drain that can never happen from
+  inside it. This is the opposite of the UART case: SERCOM TX is drained by
+  a hardware interrupt that keeps firing regardless of what the main loop is
+  doing, which is exactly why the borrowed-serial-buffer trick worked and a
+  plain socket busy-wait can't.
+- User asked directly: would it help to call `SYS_Tasks()` itself during the
+  wait? Answer: not the *whole* thing - that would recurse into
+  `SYS_CMD_Tasks()` (the very frame already on the stack, with its own
+  static parser state) and into `APP_Tasks()`, risking interleaved app-level
+  state machine execution. But the two specific sub-calls that actually
+  matter, `TCPIP_STACK_Task()` and `NET_PRES_Tasks()`, are never reachable
+  from `F_Telnet_MSG()`'s own call chain (confirmed: that function is only
+  ever reached via the `SYS_CMD_API` `.msg`/`.print` callback, i.e. only
+  from `SYS_CMD_Tasks()`, a sibling of `TCPIP_STACK_Task()` in `SYS_Tasks()`,
+  never nested inside it) - so calling just those two, out of turn, is safe.
+- Added `APP_PumpNetworkStack()` (`app.c`/`app.h`) wrapping exactly those two
+  calls (needs `sysObj`, hence a new `#include "definitions.h"` in `app.c`
+  - the only file in this app that now includes it). `F_Telnet_MSG()` calls
+  it from inside its busy-wait loop instead of just spinning.
+- **Verified** (rebuilt, reflashed, retested with a longer-timeout test
+  script since large dumps now legitimately take a couple of seconds):
+  `dump 800` -> 4011 bytes in 1.81s, complete; `dump 2000` -> 9938 bytes in
+  1.81s, complete; `dump 4000` -> 19813 bytes in 1.81s, complete; `dump 8000`
+  -> 39554 bytes in 2.21s, complete; `netinfo` -> complete, 1.81s. All
+  previously truncated at ~3072 bytes (the `TCPIP_TELNET_SKT_TX_BUFF_SIZE`
+  limit); none truncate now, regardless of size, and latency stays flat
+  (~1.8-2.2s) rather than growing with output size.
+- New hand-patch, see `docs/mcc-generated-code-patches.md` item 8 and
+  `patches/telnet.patch`.
+
+### Follow-up: `F_Telnet_MSG()` still corrupted large dumps intermittently
+
+- User asked for a `dump 0x20000000 32000` test. It "came in bursts" (expected)
+  but the output "wasn't clean throughout - sometimes one line runs straight
+  into the next with no line break". Reproduced: byte-level diff of the raw
+  socket capture showed a line's ASCII tail cut short (e.g. 9 of 16 `.`
+  characters) with the *next* line's `20000940:` address glued directly onto
+  it - no `\n\r` between them at all, and total bytes received differed on
+  every run (158020/158029/157993/158065/158212 across 5 runs).
+- User also asked to cross-check with a `tshark` capture rather than trust the
+  Python client alone. Captured `tcp port 23` during a run, extracted the
+  server->client bytes via `tshark -r <pcap> -q -z "follow,tcp,raw,0"` (lines
+  starting with a tab = server->client) and re-ran the same corruption check
+  against the wire-level bytes: same banner/prompt content as the Python
+  capture (no client-side reinterpretation happening), and that particular
+  capture run happened to complete clean - consistent with a *timing race*,
+  not a fixed size limit or a client-side artifact (a deterministic bug would
+  reproduce identically every run; a race would not, and did not).
+- Root cause: `F_Telnet_MSG()`'s pre-check, `NET_PRES_SocketWriteIsReady(tSkt,
+  len, 0U) < len`, does not reliably predict what a single
+  `NET_PRES_SocketWrite()` call actually accepts. The call was still made
+  once with its return value discarded - same "fire and forget" bug this
+  whole investigation started from on the serial side
+  (`SERCOM1_USART_Write()`), just intermittent here instead of consistent.
+- Fixed by looping on the real return value: write, and if it accepted fewer
+  bytes than requested, pump the stack (`APP_PumpNetworkStack()`) and retry
+  the remainder, bounded by the same 500ms per-message deadline as before.
+- User also asked directly whether `CmdDumpMem()`'s own serial-buffer busy-wait
+  (`SYS_CONSOLE_WriteFreeBufferCountGet(...) < pos`, `app.c`) should now be
+  made to "work with both UART and Telnet" given the new fix. Answer: it
+  already does, for two different reasons - it is the real throttle for a
+  serial-issued dump, and a harmless near-instant no-op for a Telnet-issued
+  one (Telnet's actual correctness now lives entirely in `F_Telnet_MSG()`).
+  Updated that function's comment, which had gone stale - it previously
+  described Telnet correctness as coming from sizing
+  `TCPIP_TELNET_SKT_TX_BUFF_SIZE` to cover the reply, which stopped being true
+  the moment `F_Telnet_MSG()` grew its own retry loop.
+- **Verified:** `dump 0x20000000 32000` re-run 5x back-to-back, all 5 runs
+  158065 bytes, zero glued/malformed lines - deterministic where it was
+  variable before. `docs/mcc-generated-code-patches.md` item 8 and
+  `patches/telnet.patch` updated to match the final code.
+
 ---
 
 <!-- Append new dated entries above this line as work continues. -->

@@ -38,6 +38,7 @@ grep -rn "TEMP DIAG"   firmware/src/config/default/
 | 5 | `driver\lan865x\src\dynamic\drv_lan865x_api.c` — `mirror_eth0_tx_hook()` call | `mirror`/`sniffer` stop capturing the bridge's own TX traffic | Low — feature regression, no crash |
 | 6 | `driver\lan865x\src\dynamic\drv_lan865x_api.c` + `library\tcpip\src\telnet.c` — `#include <stdarg.h>` | Build fails outright (`implicit declaration of function 'va_start'`) | **Critical — build blocker**, but easy to spot and re-add |
 | 7 | `system\command\src\sys_command.c` — CR NUL line-ending handling | Every Telnet command after the first one in a session silently fails ("Please type in a command") | High — correctness, Telnet-only |
+| 8 | `library\tcpip\src\telnet.c` — `F_Telnet_MSG()` real backpressure | Large command output over Telnet (e.g. `dump`, `netinfo`) truncates instead of completing | Medium — correctness, Telnet-only |
 | — | `driver\lan865x\src\dynamic\tc6\tc6.c` + `drv_lan865x_api.c` — diagnostic prints | Loses an in-progress debugging aid, nothing else | None (temporary, currently disabled) |
 
 Recommended re-apply order after any `Generate Code` run: **1 first** (nothing else
@@ -391,6 +392,75 @@ unaffected (its line editor never sees a NUL byte from a physical terminal).
 **Root-caused and fixed 2026-08-31** (see `docs/session-log.md`) - verified
 both with a synthetic two-consecutive-commands reproduction over a raw socket
 and live in TeraTerm.
+
+---
+
+## 8. `library\tcpip\src\telnet.c` — `F_Telnet_MSG()` real backpressure
+
+**Why:** command output larger than `TCPIP_TELNET_SKT_TX_BUFF_SIZE` truncated over
+Telnet (`dump`, `netinfo`), because `F_Telnet_MSG()` called `NET_PRES_SocketWrite()`
+unconditionally and ignored how much it actually accepted — same pattern as
+`SERCOM1_USART_Write()`'s silent-truncation-on-full-buffer behaviour on the serial
+side, but with no equivalent of `DumpMem()`'s `SYS_CONSOLE_WriteFreeBufferCountGet()`
+busy-wait available on the Telnet side to throttle against.
+
+A first attempt (2026-08-31) added exactly that: a bounded busy-wait on
+`NET_PRES_SocketWriteIsReady()`, later also adding `NET_PRES_SocketFlush()` per call
+(matching this file's own login/banner code). Neither helped — measured `dump 800`
+at 3075–3093 of the needed ~4011 bytes, taking 6.6s instead of completing near
+instantly. Root cause: in this bare-metal, single-superloop build, `SYS_CMD_Tasks()`
+— which runs the command handler that calls `F_Telnet_MSG()` — executes *before*
+`TCPIP_STACK_Task()`/`NET_PRES_Tasks()` in `SYS_Tasks()`
+(`config\default\tasks.c`). Nothing drains a Telnet socket's TX buffer until those
+two run, so a bare busy-wait just burns its timeout waiting on a drain that can
+never happen from inside it — unlike the serial UART case, where a hardware
+interrupt keeps draining the ring buffer regardless of what the main loop is doing.
+
+**What:** two parts, both needed. First, pump the network stack while waiting
+instead of just spinning, via a new `APP_PumpNetworkStack()` (`app.c`/`app.h`) that
+runs `TCPIP_STACK_Task(sysObj.tcpip)` + `NET_PRES_Tasks(sysObj.netPres)` out of
+turn. This is safe from reentrancy because `F_Telnet_MSG()` is only ever reached via
+the `SYS_CMD_API` `.msg`/`.print` callback — i.e. only from `SYS_CMD_Tasks()`'s call
+chain, which is a *sibling* of `TCPIP_STACK_Task()` in `SYS_Tasks()`, never nested
+inside it. `APP_PumpNetworkStack()` is therefore an extra out-of-turn call, not a
+recursive one. (A plain call to the whole `SYS_Tasks()` was considered and
+rejected: it would re-enter `SYS_CMD_Tasks()` itself — the very frame already on
+the stack, with its own static parser state — and `APP_Tasks()`, risking
+interleaved app-level state machine execution.)
+
+Second — found only after the first part alone still showed *intermittent*
+corruption on large dumps (`dump 0x20000000 32000` over Telnet: a line's ASCII
+tail would occasionally go missing and the next line's address glue on directly,
+no `\n\r` between them, at a different byte offset each run): a bounded
+pre-check on `NET_PRES_SocketWriteIsReady()` does not reliably predict what a
+single `NET_PRES_SocketWrite()` call actually accepts. The original code wrote
+once and discarded the return value — same "fire and forget" bug as
+`SERCOM1_USART_Write()` on the serial side, just less obvious because it usually
+(not always) writes everything requested. Fixed by looping on the real return
+value instead of trusting the pre-check:
+```c
+uint16_t sent = 0U;
+while(sent < len)
+{
+    uint16_t remaining = (uint16_t)(len - sent);
+    uint16_t n = (uint16_t)NET_PRES_SocketWrite(tSkt, FC_CStr2CVPtr(&str[sent]), remaining);
+    if(n > 0U) { sent = (uint16_t)(sent + n); continue; }
+    if((int64_t)(SYS_TIME_Counter64Get() - deadline) >= 0) { break; }
+    APP_PumpNetworkStack();
+}
+(void)NET_PRES_SocketFlush(tSkt);
+```
+
+**If lost:** large Telnet command output silently truncates again at whatever
+`TCPIP_TELNET_SKT_TX_BUFF_SIZE` currently is, and/or intermittently corrupts
+(concatenated lines, no separator) on runs large enough to hit the write-retry
+race (serial output is unaffected either way). **Root-caused and fixed
+2026-08-31** (see `docs/session-log.md`) — verified with `dump` at
+800/2000/4000/8000/32000 bytes (all complete: 4011/9938/19813/39554/158065
+bytes, ~1.8–5.3s, vs. truncating at ~3072 bytes before) and with `netinfo`;
+`dump 0x20000000 32000` re-run 5x back-to-back after the write-retry fix came
+back byte-identical (158065 bytes, zero glued lines) every time, vs. varying
+every run before it (158020/158029/157993/158065/158212).
 
 ---
 

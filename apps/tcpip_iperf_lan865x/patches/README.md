@@ -63,6 +63,7 @@ still pristine MCC output, before any hand-patch to it):
 | `drv_lan865x_api.patch` | `3910e51` |
 | `initialization.patch` | `e569c7e` |
 | `sys_command.patch` | `a23af6c` |
+| `telnet.patch` | `a23af6c` |
 
 (`drv_lan865x_api.patch`'s baseline already contains the `stdarg.h` fix for that
 file, bundled into that commit - that's why `stdarg.h` is handled separately, not

@@ -172,6 +172,12 @@ void APP_Initialize ( void );
 
 void APP_Tasks( void );
 
+/* Runs TCPIP_STACK_Task()+NET_PRES_Tasks() out of turn. Exists solely for
+ * telnet.c's F_Telnet_MSG() hand-patch to call while it busy-waits for TX
+ * space - see APP_PumpNetworkStack()'s own comment in app.c for why this is
+ * safe there. Not for general use. */
+void APP_PumpNetworkStack( void );
+
 //DOM-IGNORE-BEGIN
 #ifdef __cplusplus
 }
