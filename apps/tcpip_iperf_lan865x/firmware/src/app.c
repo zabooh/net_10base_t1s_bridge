@@ -104,11 +104,6 @@ bool TelnetAuthenticationHandler(const char* user, const char* password, const T
     (void)pInfo;
     (void)hParam;
 
-    /* Temporary diagnostic: show exactly what was received, so stray
-       characters (e.g. a trailing '\r' the terminal client left in) are
-       visible instead of just "Declined". Remove once login works. */
-    SYS_CONSOLE_PRINT("Telnet auth attempt: user=\"%s\" password=\"%s\"\n\r", user, password);
-
     if ((strcmp(user, "admin") == 0) && (strcmp(password, "password") == 0)) {
         SYS_CONSOLE_PRINT("Telnet Access Authenticated\n\r");
         return true;
@@ -617,11 +612,17 @@ void APP_Initialize ( void )
     /* Place the App state machine in its initial state. */
     appData.state = APP_STATE_INIT;
 
-    /* Temporary diagnostic: confirm the registration itself succeeded
-       (a NULL return means the handler slot was already occupied).
-       Remove once Telnet login is confirmed working. */
-    TCPIP_TELNET_HANDLE telnetAuthHandle = TCPIP_TELNET_AuthenticationRegister(TelnetAuthenticationHandler, &TelnetHandlerParam);
-    SYS_CONSOLE_PRINT("Telnet auth handler registration: %s\n\r", (telnetAuthHandle != NULL) ? "OK" : "FAILED (slot already taken)");
+    /* TCPIP_TELNET_AuthenticationRegister() is deferred to APP_STATE_SERVICE_TASKS,
+     * NOT called here: TCPIP_TELNET_Initialize() (MCC-generated telnet.c) runs as
+     * part of the TCP/IP stack's own module init, which at this point has only
+     * been STARTED (not completed) by TCPIP_STACK_Init() - and unconditionally
+     * resets its module-static telnetAuthHandler to NULL. Calling this here
+     * appeared to succeed (non-NULL handle returned) but was silently wiped out
+     * moments later, so every real login attempt found telnetAuthHandler == NULL
+     * and fell through to "Access denied" without ever calling
+     * TelnetAuthenticationHandler() - confirmed 2026-08-31 (see docs/session-log.md).
+     * Same root cause class as the MIRROR_Initialize() bug above: an app.c call
+     * into a TCP/IP module before that module's own init has actually run. */
 
     timerHandle = SYS_TIME_TimerCreate(0, SYS_TIME_MSToCount(1000), &BRIDGE_TimerCallback, (uintptr_t) NULL, SYS_TIME_PERIODIC);
     SYS_TIME_TimerStart(timerHandle);
@@ -682,6 +683,13 @@ void APP_Tasks ( void )
             TCPIP_STACK_PacketHandlerRegister(eth1_net_hd, pktEth1Handler, MyEth1HandlerParam);
             env_apply();   /* push the persisted network config into the stack (once, stack is up) */
             MIRROR_Initialize();  /* deferred from APP_Initialize() - see comment there; stack/heap are up here */
+            {
+                /* Deferred from APP_Initialize() - see comment there; the telnet
+                 * module's own init has actually run by now, so this registration
+                 * survives instead of being silently reset to NULL. */
+                TCPIP_TELNET_HANDLE telnetAuthHandle = TCPIP_TELNET_AuthenticationRegister(TelnetAuthenticationHandler, &TelnetHandlerParam);
+                SYS_CONSOLE_PRINT("Telnet auth handler registration: %s\n\r", (telnetAuthHandle != NULL) ? "OK" : "FAILED (slot already taken)");
+            }
             appData.state = APP_STATE_IDLE;
             break;
         }

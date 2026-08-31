@@ -1693,6 +1693,47 @@ completed step — do not wait until the end of the session.
   data path (the normal, non-mirror forwarding never went through
   `MIRROR_Eth0Rx()`, so it was never affected by this bug).
 
+### Fixed Telnet login ("Access denied" in TeraTerm) - same root cause class as MIRROR_Initialize()
+
+- User reported TeraTerm always showed "Access denied" logging into the Telnet
+  console, asked to test it with a Python tool instead. Wrote a raw-socket test
+  script (no `telnetlib` - removed in this machine's Python 3.14) plus a parallel
+  `tshark` capture on `tcp port 23` to see the exact bytes on the wire, and a
+  `cli.py --listen` capture of the debug console in parallel. Reproduced
+  immediately: `admin`/`password` (the hardcoded credentials in
+  `TelnetAuthenticationHandler()`, `app.c`) got `Access denied` every time, and -
+  the key clue - the handler's own diagnostic print ("Telnet auth attempt:
+  user=...") **never appeared** on the debug console, meaning the handler was
+  never actually being called despite `APP_Initialize()` reporting successful
+  registration ("Telnet auth handler registration: OK") at boot.
+- **Root cause, found by reading `telnet.c` (MCC-generated)**: identical bug class
+  to the `MIRROR_Initialize()` heap-timing bug fixed earlier this session.
+  `TCPIP_TELNET_AuthenticationRegister(TelnetAuthenticationHandler, ...)` was
+  called from `APP_Initialize()`, which runs synchronously inside `SYS_Initialize()`
+  - before `TCPIP_STACK_Init()`'s asynchronous module initialization has actually
+  reached the Telnet module. `TCPIP_TELNET_Initialize()` (`telnet.c` line 317)
+  unconditionally sets its module-static `telnetAuthHandler = NULL;` as part of
+  that later init - silently wiping out the registration that had appeared to
+  succeed moments earlier. By the time a real connection came in,
+  `telnetAuthHandler == NULL`, so `telnet.c`'s login-processing code
+  (`M_TELNET_USE_AUTHENTICATION_CALLBACK != 0` branch, line ~717-733) never
+  called our handler and `authRes` stayed `false` - "Access denied", with no
+  trace of our handler ever running.
+- **Fix** (`app.c`, no MCC-generated file touched): moved
+  `TCPIP_TELNET_AuthenticationRegister()` out of `APP_Initialize()` and into the
+  existing `APP_STATE_SERVICE_TASKS` phase, right after `MIRROR_Initialize()` -
+  the same place already proven to be "stack is definitely up" for that earlier
+  bug. Also removed the now-redundant "Temporary diagnostic: Telnet auth attempt:
+  user=... password=..." print from `TelnetAuthenticationHandler()` (logged the
+  plaintext password to the console on every attempt - fine for debugging a
+  broken handler, not something to leave in once it works); kept the
+  Authenticated/Declined outcome prints, which reveal nothing sensitive.
+- **Verified end-to-end, twice** (once right after the fix, once again on a full
+  clean rebuild+reflash after the debug-print cleanup): the same raw-socket
+  Python test now gets `Logged in successfully` plus the full `help` command
+  listing instead of `Access denied`, confirmed both in the script's own output
+  and in a fresh `tshark` capture of the exchange on the wire.
+
 ---
 
 <!-- Append new dated entries above this line as work continues. -->

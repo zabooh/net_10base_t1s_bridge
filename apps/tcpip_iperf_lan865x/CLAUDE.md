@@ -228,6 +228,16 @@ cli.bat --port COM8 --read 3 "reset"
   der schon Paket-Handler-Registrierung und `env_apply()` auf einen laufenden Stack warten).
   Die anderen drei portierten Module (`lan865x_diag`/`noip_test`/`testserver`) registrieren in
   ihrer `_Initialize()` nur CLI-Kommandos (kein Heap-Zugriff) und sind davon nicht betroffen.
+- **Telnet-Login zeigte immer „Access denied" — gefixt 2026-08-31, dieselbe Bug-Klasse wie
+  `MIRROR_Initialize()` oben.** `TCPIP_TELNET_AuthenticationRegister()` wurde ebenfalls aus
+  `APP_Initialize()` heraus aufgerufen — die Registrierung meldete Erfolg, wurde aber von
+  `TCPIP_TELNET_Initialize()` (`telnet.c`, MCC-generiert, Zeile ~317: `telnetAuthHandler =
+  NULL;`) kurz danach stillschweigend überschrieben, weil dieses Modul-Init erst später als
+  Teil von `TCPIP_STACK_Init()`s asynchroner Initialisierung läuft. Jeder echte Login-Versuch
+  traf dadurch auf `telnetAuthHandler == NULL` und wurde ohne jeden Aufruf unseres Handlers
+  abgelehnt. **Fix:** Registrierung nach `APP_STATE_SERVICE_TASKS` verschoben, direkt hinter
+  `MIRROR_Initialize()`. **Verifiziert** per rohem Python-Socket-Test plus paralleler
+  `tshark`-Aufnahme auf `tcp port 23`: `Logged in successfully` statt `Access denied`.
 - **LAN865x-RX-Pfad hatte eine echte Race Condition — gefixt 2026-08-31 (siehe
   `docs/session-log.md` für die volle Herleitung).** Ursprünglicher Befund:
   `rxPkt->pDSeg->segLen` wich vom im IP-Header deklarierten Gesamtlängenwert ab, und zwar
