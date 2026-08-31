@@ -252,7 +252,22 @@ void MIRROR_Eth0Rx(TCPIP_MAC_PACKET *rxPkt)
         if (memcmp(frame, mac, 6) != 0) return;      /* dst MAC != eth0 -> not for us, skip */
     }
     s_dbg_rx_passed_filter++;
-    mirror_ethpkt_to_eth1(frame, rxPkt->pDSeg->segLen);
+    /* rxPkt->pDSeg->segLen is NOT the full frame length here: the generic stack RX
+     * path (tcpip_manager.c, TCPIP_STACK_ProcessRxPkt-equivalent) already subtracted
+     * sizeof(TCPIP_MAC_ETHERNET_HEADER) from it before this hook ever runs, per the
+     * documented RX contract in tcpip_mac.h ("segLen is updated by each stack layer
+     * in turn") - by this point it means "payload after the MAC header", not "bytes
+     * starting at pMacLayer". frame == pMacLayer still points at the frame's start
+     * (header included), so the byte count actually worth copying from there is
+     * segLen + the header this hook's own copy needs to include.
+     * Root-caused 2026-08-31 (see docs/session-log.md): using segLen directly here
+     * made every mirrored/sniffed frame exactly sizeof(TCPIP_MAC_ETHERNET_HEADER)
+     * (14) bytes short - invisible on frames under MIRROR_SAFE_FRAME_LEN's later
+     * clamp only by luck, but real, reproducible payload truncation on anything
+     * that needed more than one TC6 SPI chunk (confirmed via tshark: a 1514-byte
+     * frame arrived at the PC as 1504 bytes, corrupting Wireshark's TCP reassembly
+     * with spurious "Previous segment not captured" on every large frame). */
+    mirror_ethpkt_to_eth1(frame, (uint16_t)(rxPkt->pDSeg->segLen + sizeof(TCPIP_MAC_ETHERNET_HEADER)));
 }
 
 /* TX mirror: called from DRV_LAN865X_PacketTx (the single eth0 egress point) for

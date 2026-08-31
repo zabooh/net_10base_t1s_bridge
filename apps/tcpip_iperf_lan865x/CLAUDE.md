@@ -248,16 +248,40 @@ cli.bat --port COM8 --read 3 "reset"
   konstant `102` (keine Streuung mehr); der volle `sniffer_capture_test.py`-Vollständigkeitstest
   zeigte für **alle 3982** iperf-UDP-Frames exakt dieselbe `frame.len/ip.len/udp.length`-Kombination
   (0 Varianz) — die nicht-deterministische Komponente ist nachweislich behoben.
-  **Weiterhin offen (kleiner, aber jetzt deterministischer Rest):** ein fester, größenabhängiger
-  Offset bleibt bestehen (~1512-Byte-Frames: konstant 10 Byte zu wenig; ~98-Byte-Frames: konstant
-  4 Byte zu viel) — vermutlich eine separate, noch nicht root-gecausete Chunk-Grenzen-Eigenheit in
-  `tc6.c`, unabhängig von der jetzt gefixten Race Condition. Kein bekannter Funktionsschaden
-  (Datenvollständigkeit durchgehend bestätigt). Noch nicht geprüft, ob die normale Bridge-
-  Weiterleitung (`tcpip_mac_bridge.c`) davon betroffen ist.
-  **Temporäre Diagnose-Instrumentierung** (`g_tc6DiagEnable`-Flag in `tc6.c`, per
-  `poke <addr> 1/0` schaltbar, gated `SYS_CONSOLE_PRINT` in `process_rx()`/
-  `TC6_CB_OnRxEthernetPacket()`) ist noch im Code, aktuell deaktiviert — vor einem Release-Build
-  entfernen oder bei Fortsetzung der Untersuchung wieder verwenden.
+  **Der damals offen gelassene Rest (fester, größenabhängiger Offset: ~1512-Byte-Frames
+  10 Byte zu wenig, ~98-Byte-Frames 4 Byte zu viel) ist inzwischen root-gecauset und
+  gefixt — 2026-08-31, siehe `docs/session-log.md` für die volle Herleitung.** Zwei
+  unabhängige, sich addierende Effekte, nicht eine einzelne Chunk-Grenzen-Eigenheit:
+  1) `TC6_CB_OnRxEthernetPacket()` meldet `len`/`segLen` durchgehend 4 Byte zu groß
+     (vermutlich die vom T1S-PHY noch mitgelieferte, nie abgeschnittene 4-Byte-FCS,
+     entgegen `tcpip_mac.h`s dokumentiertem RX-Vertrag). An dieser Stelle stimmen
+     `len` und `segLen` aber immer überein — kein Rennen, keine Korruption.
+  2) Der generische, MCC-generierte Stack-Code (`library/tcpip/src/tcpip_manager.c`,
+     Zeile ~2544) zieht davon `sizeof(TCPIP_MAC_ETHERNET_HEADER)` (14) ab, bevor er an
+     registrierte Paket-Handler wie `pktEth0Handler()`/`MIRROR_Eth0Rx()` weiterreicht —
+     dokumentiertes, korrektes Standardverhalten des Frameworks, kein Bug für sich.
+  **Der eigentliche Bug (nicht MCC-generiert, App-Code):** `port_mirror.c`s
+  `MIRROR_Eth0Rx()` benutzte `rxPkt->pDSeg->segLen` an dieser Stelle direkt als volle
+  Kopierlänge ab `pMacLayer` — es bedeutet dort aber "Payload nach dem 14-Byte
+  MAC-Header", nicht "volle Framelänge". Jeder gesniffte/gespiegelte RX-Frame wurde
+  dadurch 14 Byte zu kurz kopiert (bei kleinen Frames unsichtbar, solange
+  `MIRROR_SAFE_FRAME_LEN`s Clamp nicht griff; bei allem über einem TC6-SPI-Chunk sehr
+  sichtbar). **Fix (eine Zeile):** `rxPkt->pDSeg->segLen + sizeof(TCPIP_MAC_ETHERNET_HEADER)`
+  als Framelänge an `mirror_ethpkt_to_eth1()` übergeben — bewusst nur an der RX-Stelle,
+  nicht bei `mirror_eth0_tx_hook()` (TX-Pakete durchlaufen den RX-seitigen
+  Header-Abzug nie, ihr `segLen` bedeutet dort schon "volle Framelänge").
+  **Hatte doch Funktionsschaden, anders als hier ursprünglich vermerkt:** korrupte
+  Sniffer-Captures (jedes große Frame zeigte in Wireshark "Previous segment not
+  captured"/"ACKed unseen segment") — die normale Bridge-Weiterleitung
+  (`tcpip_mac_bridge.c`) läuft nie durch `MIRROR_Eth0Rx()` und war nie betroffen.
+  **Verifiziert** (zweimal: direkt nach dem Fix und nochmal nach vollständigem Entfernen
+  der Diagnose-Instrumentierung + Clean-Rebuild): `sniffer_capture_test.py` zeigt
+  UDP/TCP in beiden Richtungen `COMPLETE`, keine „shorter than IP/UDP header claims"-
+  Warnung mehr; `tshark` bestätigt `frame.len=1514`/`tcp.len=1460` (vorher
+  `1504`/`1450`) und null `tcp.analysis.lost_segment`-Treffer.
+  Die temporäre Diagnose-Instrumentierung (`g_tc6DiagEnable` in `tc6.c`/
+  `drv_lan865x_api.c`, plus das dafür ergänzte `MIRRORDIAG` in `port_mirror.c`) ist
+  wieder vollständig entfernt.
 - **`suppressTx` aus dem Schwesterprojekt portiert (2026-08-31):** `setenv sniffer 1` +
   `saveenv` sorgte vorher nur für das RAM-Flag „sniffer ON at boot", ohne den T1S-Sender
   wirklich stummzuschalten — bestätigt per `lan_read 0x000308F9` (`T1SPMACTL`), das direkt

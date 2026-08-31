@@ -143,10 +143,16 @@ def main():
     print(f"\n{'patch':<28} {'status':<12} detail")
     print("-" * 90)
     failed = 0
+    pending = 0
+    applied = 0
     for name, status, detail in rows:
         print(f"{icon.get(status, ' ')} {name:<26} {status:<12} {detail}")
         if status == "FAILED":
             failed += 1
+        elif status == "WOULD APPLY":
+            pending += 1
+        elif status == "APPLIED":
+            applied += 1
 
     print()
     if args.check:
@@ -154,6 +160,12 @@ def main():
     if failed:
         print(f"{failed} patch(es) need manual attention - see docs/mcc-generated-code-patches.md")
         return 1
+    if pending:
+        print(f"{pending} patch(es) missing - re-run without --check to apply.")
+        return 1
+    if applied:
+        print(f"{applied} patch(es) applied.")
+        return 0
     print("All patches present.")
     return 0
 

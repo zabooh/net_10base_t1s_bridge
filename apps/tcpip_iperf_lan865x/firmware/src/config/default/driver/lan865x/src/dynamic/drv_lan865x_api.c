@@ -38,6 +38,7 @@ Microchip or any third party.
     This file combine the TC6 low level driver with all the necessary parts to be compatible with the MCHP TCP/IP stack
 
 *******************************************************************************/
+
 #include <stdarg.h>
 #include "configuration.h"
 #include "definitions.h"
@@ -1384,18 +1385,6 @@ void TC6_CB_OnRxEthernetPacket(TC6_t *pInst, bool success, uint16_t len, uint64_
             pDrvInst->rxStats.nRxErrorPackets++;
         } else {
             macPkt = pDrvInst->rxDescriptors.macPkt;
-            /* TEMP DIAG 2026-08-31 - remove after RX segLen root-cause (see docs/session-log.md) */
-            extern uint32_t g_tc6DiagEnable;
-            if (0u != g_tc6DiagEnable) {
-                uint16_t dbg_i;
-                uint16_t dbg_n = (macPkt->pDSeg->segLen < 48u) ? macPkt->pDSeg->segLen : 48u;
-                SYS_CONSOLE_PRINT("TC6DIAG packet done: len=%u segLen=%u data:", (unsigned)len,
-                    (unsigned)macPkt->pDSeg->segLen);
-                for (dbg_i = 0u; dbg_i < dbg_n; dbg_i++) {
-                    SYS_CONSOLE_PRINT(" %02x", (unsigned)macPkt->pDSeg->segLoad[dbg_i]);
-                }
-                SYS_CONSOLE_PRINT("\r\n");
-            }
             SYS_ASSERT(len == macPkt->pDSeg->segLen, "Invalid RX length");
             pDrvInst->rxDescriptors.macPkt = NULL;
             pDrvInst->rxStats.nRxPendBuffers++;

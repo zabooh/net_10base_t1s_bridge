@@ -1571,6 +1571,128 @@ completed step — do not wait until the end of the session.
   then launched the real window for real (background process, no immediate
   exception) for the user to click "Connect All" and confirm all three panes.
 
+### First real MCC regenerate against `patches/apply_patches.py` - and a bug it exposed
+
+- User ran MCC's plain "Generate" in MPLAB X first: touched only `definitions.h`
+  (two `#include` lines reordered, cosmetic) plus the `*.yml` manifests
+  (timestamps/hashes only) - confirmed via `git diff` and, tellingly, via mtimes:
+  `plib_clock.c`/`drv_lan865x_api.c`/`drv_lan865x.h`/`initialization.c` kept their
+  **old** mtime from the last hand-patch session, proving MCC's incremental
+  generator skips a file entirely when nothing in its component model changed.
+  Not yet the real test - `apply_patches.py --check` correctly reported
+  "All patches present." because nothing had actually been touched.
+- User then used the toolbar dropdown next to "Generate" -> **"Force Update on
+  All"**, which bypasses the incremental skip and rewrites every generated file
+  from its template regardless of model state, then accepted MCC's own
+  diff/merge prompt for each changed file (took the regenerated version
+  everywhere, no manual merging) - this is the real test `apply_patches.py` was
+  built for.
+- **Result:** all four hand-patched files really did get overwritten (`git
+  status` showed them modified, mtimes updated to the Force-Update run).
+  `apply_patches.py --check` correctly flagged all 6 items as missing
+  (`WOULD APPLY`) - but its own final summary line still printed **"All patches
+  present."**, a real bug: the summary only ever counted `FAILED` rows, never
+  `WOULD APPLY`/`APPLIED`, so it could report "all good" even when every single
+  patch was reported missing right above it. **Fixed** (`patches/apply_patches.py`):
+  the summary now tracks `pending`/`applied` counts too and prints an accurate
+  final line for each case (`"N patch(es) missing - re-run without --check to
+  apply."`, exit code 1, when something is pending even though nothing failed).
+- Ran `apply_patches.py` for real: **all 6 items applied cleanly** (`[+] APPLIED`
+  for the 4 git-diff patches, `[+] APPLIED` for both `stdarg.h` inserts).
+  `--check` afterward: clean `[ok] OK` across the board, now correctly printing
+  "All patches present." Diffed the four core files against the last committed
+  (hand-patched) `HEAD` state: **byte-identical** for `drv_lan865x.h`,
+  `initialization.c`, `plib_clock.c`, `telnet.c`; `drv_lan865x_api.c` differed by
+  only the deliberately-excluded TEMP DIAG block (12 lines, correctly NOT
+  restored) plus one harmless blank line MCC's own template now inserts near the
+  top of the file. `tc6.c` lost its TEMP DIAG instrumentation too, also correctly
+  left alone (documented as excluded, not a patch-tool target).
+- **Conclusion:** the patch-reapply tool now has a genuine, not just synthetic,
+  end-to-end pass against a real "Force Update on All" - the scenario it exists
+  for.
+
+### Root-caused and fixed the residual sniffer/mirror RX length offset
+
+- User captured a real sniffer-mode session in Wireshark (bridge in sniffer mode,
+  iperf TCP between Follower A and B, capture on the PC's mirrored eth1):
+  practically every large TCP segment showed "Previous segment not captured"
+  immediately followed by "ACKed unseen segment" - a real, reproducible protocol-
+  analysis-breaking symptom, not a false alarm. Traced to the "small, deterministic,
+  unexplained residual RX length offset" left open in the interrupt-race fix
+  earlier this session (`8972180`) - `tcp.seq` advanced by 1460 per segment (the
+  sender's real payload) while the captured `tcp.len` was only 1450: exactly 10
+  bytes missing from every large mirrored frame, not a Wireshark artifact.
+- Re-added the TEMP DIAG instrumentation (`g_tc6DiagEnable`, wiped by the MCC
+  Force-Update-on-All regenerate a few steps earlier - restored verbatim from
+  commit `8972180`'s diff via `git show`) to `tc6.c`/`drv_lan865x_api.c`, then
+  built+flashed+tested this investigation directly (user: "bau du, und flash und
+  teste es genau so wie ich es gemacht habe").
+  - First attempt: tracing every chunk during a real full-rate iperf run flooded
+    the 115200-baud console faster than it could drain, corrupting the trace into
+    garbled interleaved fragments. Fixed by gating the chunk-level trace to only
+    the frame-ending chunk (`ev || twoFrames`, where `ebo`/`sbo` are actually
+    computed) instead of every chunk - cut the volume ~24x for large frames.
+  - Still flooded at full iperf rate; switched to a controlled reproduction
+    instead: single large UDP datagrams (`iperf -u -b 20000 -l 1472`, ~0.6 s
+    apart) via a small ad hoc Python harness driving `iperf_matrix_test.py`'s
+    `DeviceServerCapture`/`_send_cmd` helpers directly, giving the UART time to
+    fully drain between frames.
+- **Found, with a clean trace**: `TC6_CB_OnRxEthernetPacket()` (`drv_lan865x_api.c`)
+  consistently reports `len`/`segLen` = real frame length (header + payload)
+  **+ 4 bytes** for every frame size tested (64/102/110/1518 for real 60/98/106/
+  1514-byte frames) - almost certainly the trailing 4-byte Ethernet FCS that the
+  T1S PHY still delivers over SPI and that the driver does not strip, contrary to
+  `tcpip_mac.h`'s documented RX contract ("the MAC driver subtracts the FCS...
+  before handing over the packet to the stack"). At this level `len` and `segLen`
+  always agreed with each other (no corruption, no race) - ruling out `tc6.c`'s
+  chunk-boundary math (`sv`/`sbo`/`ev`/`ebo`) as the cause of the visible symptom.
+- Added a second, targeted diagnostic in `port_mirror.c` (`MIRRORDIAG`, gated the
+  same way) and confirmed with the SAME frames that `rxPkt->pDSeg->segLen` had
+  already dropped to exactly 14 less by the time `MIRROR_Eth0Rx()` reads it
+  (1518 at the driver -> 1504 at the mirror hook). Found why in the MCC-generated
+  `library/tcpip/src/tcpip_manager.c` (lines ~2544-2551): the generic stack RX
+  path unconditionally subtracts `sizeof(TCPIP_MAC_ETHERNET_HEADER)` (14) from
+  `segLen` before dispatching to registered packet handlers like
+  `pktEth0Handler()`/`MIRROR_Eth0Rx()` - documented, correct, standard framework
+  behavior (`tcpip_mac.h`: "segLen is updated by each stack layer in turn"), not
+  itself a bug.
+- **Root cause**: `port_mirror.c`'s `MIRROR_Eth0Rx()` read `rxPkt->pDSeg->segLen`
+  at that point and used it directly as "how many bytes to copy starting at
+  `pMacLayer`" - but by then it means "payload after the 14-byte MAC header", not
+  "full frame length". Every RX-mirrored frame was therefore copied exactly 14
+  bytes short. Invisible on small single-chunk frames whenever `MIRROR_SAFE_FRAME_LEN`'s
+  later clamp (1514) never engaged, but very visible on anything needing more than
+  one TC6 SPI chunk, where the true content ran past what got copied.
+- **Fix** (`port_mirror.c`, `MIRROR_Eth0Rx()`, one line): pass
+  `rxPkt->pDSeg->segLen + sizeof(TCPIP_MAC_ETHERNET_HEADER)` as the frame length to
+  `mirror_ethpkt_to_eth1()` instead of `segLen` alone. Deliberately scoped to the
+  RX-mirror call site only - checked `mirror_eth0_tx_hook()` (the TX-mirror call
+  site) separately: TX packets are constructed by the stack itself and never go
+  through the RX-side header-stripping code path, so their `segLen` already means
+  "full frame including header" per `tcpip_mac.h`'s own TX contract; applying the
+  same `+14` there would have double-counted and broken a path that was already
+  correct.
+- **Verified end-to-end, twice** (once right after the fix, once again after
+  removing all TEMP DIAG instrumentation and a full clean rebuild+reflash): full
+  `sniffer_capture_test.py` run - both UDP directions now `COMPLETE` with **no**
+  "shorter than IP/UDP header claims" warning (previously present on every run),
+  both TCP directions `COMPLETE`; `dbg: max_len_submitted` rose from `1504` to the
+  correct `1514`; a direct `tshark` check of the TCP capture confirmed
+  `frame.len=1514`/`tcp.len=1460` (previously `1504`/`1450`) and **zero**
+  `tcp.analysis.lost_segment` flags across the whole capture (previously on nearly
+  every large segment).
+- Removed all TEMP DIAG instrumentation (`g_tc6DiagEnable` and every gated print in
+  `tc6.c`, `drv_lan865x_api.c`, `port_mirror.c`) now that the root cause is fixed,
+  per the plan documented in `patches/README.md`/`docs/mcc-generated-code-patches.md`.
+  Confirmed via `grep -rn "TEMP DIAG\|g_tc6DiagEnable\|MIRRORDIAG\|TC6DIAG"
+  firmware/src/` - no remnants. Final clean build+flash+full-test pass confirmed
+  the fix holds with the diagnostics gone.
+- This **supersedes** the earlier "no known functional impact" assessment in
+  `CLAUDE.md` for the residual offset - it did have real impact (corrupted
+  sniffer captures), just not on the already-separately-verified bridge-forwarding
+  data path (the normal, non-mirror forwarding never went through
+  `MIRROR_Eth0Rx()`, so it was never affected by this bug).
+
 ---
 
 <!-- Append new dated entries above this line as work continues. -->
