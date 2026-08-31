@@ -2021,6 +2021,45 @@ completed step — do not wait until the end of the session.
   variable before. `docs/mcc-generated-code-patches.md` item 8 and
   `patches/telnet.patch` updated to match the final code.
 
+### New parallel GUI: `bridge_gui_telnet.py` connects over Telnet instead of UART
+
+- User asked for a second GUI, parallel to `bridge_gui.py`, that talks to the
+  board over the now-working Telnet server (TCP/23) instead of the EDBG COM
+  port - same tabs/features, only the connection layer swapped, with
+  IP/user/password fields (stored in a config file of its own) replacing the
+  COM port picker. Explicit constraint: don't touch `bridge_gui.py` or any of
+  its files.
+- Implementation: copied `scripts/bridge_gui.py` to `scripts/bridge_gui_telnet.py`
+  and replaced only the connection-specific parts - the serial `Link` class
+  became `TelnetLink` (same `open()/write()/close()` interface, same
+  `(port, "data"/"lost", payload)` queue protocol the rest of the GUI already
+  consumes generically via `self.port_link`), the COM-port picker in the top
+  bar became IP/User/Password entries, `get_available_com_ports()` and the
+  `winreg` fallback were dropped (no longer reachable), and the class was
+  renamed `BridgeGUITelnet`. The Flash/Erase/Select-Hex quick commands (SWD via
+  pyOCD, independent of the CLI/terminal link either way) were left untouched.
+  New dedicated config file `json/bridge_gui_telnet_config.json` (ip/telnet_user/
+  telnet_password + the same bridge/values session-state shape as
+  `bridge_config.json`, but never shared with it), defaults `192.168.0.12` /
+  `admin` / `password` as given. New launcher `run_gui_telnet.bat`, parallel to
+  `run_gui.bat`.
+- `TelnetLink._login()` drives the Login:/Password: prompt from
+  `library/tcpip/src/telnet.c` (`TELNET_START_MSG`/`TELNET_ASK_PASSWORD_MSG`/
+  `TELNET_FAIL_LOGON_MSG`/`TELNET_LOGON_OK`): a line there ends on the first CR
+  or LF in the buffer, so sending a whole `"user\r\n"`/`"pass\r\n"` at once is
+  enough, no character-by-character sending needed for the login step itself.
+- **Verified against the real board (192.168.0.12, admin/password):** a raw
+  `TelnetLink.open()` + `write(b"stats\r")` smoke test (no GUI, `scripts/`
+  directory) logged in, captured the welcome banner as the first queued
+  "data" chunk, and returned the `stats` command's full echoed output
+  correctly. A second run with a wrong password raised `PermissionError:
+  Access denied - check user/password` as expected, confirming the failure
+  path. `python -m py_compile scripts/bridge_gui_telnet.py` also passes, and
+  a diff against `bridge_gui.py` shows changes confined to exactly the
+  connection-layer edits described above - `bridge_gui.py`,
+  `bridge_config.json`, `gui_term.py` and `run_gui.bat` are untouched
+  (confirmed via `git status`).
+
 ---
 
 <!-- Append new dated entries above this line as work continues. -->
