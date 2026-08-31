@@ -2062,4 +2062,42 @@ completed step — do not wait until the end of the session.
 
 ---
 
+### MCC Generate Code round-trip test (Telnet TX buffer) + apply_patches.py ordering bug
+
+- Deliberate test to demonstrate the difference between a hand-edit to
+  generated code (silently reverted) and an MCC-model-driven value (survives
+  Generate Code): raised the Telnet Server component's "Default Socket TX
+  Buffer Size" field from `3072` to `3200` in the MCC GUI, then ran Generate
+  Code with Force to Update.
+- **Confirmed:** `configuration.h`'s `TCPIP_TELNET_SKT_TX_BUFF_SIZE` came out
+  as `3200`, proving the value now comes from the model, not a hand-edit that
+  would have reverted to `0`.
+- **Side effect, expected but worth recording precisely:** the same Generate
+  Code run wiped all 6 documented hand-patches (`docs/mcc-generated-code-patches.md`)
+  - confirmed via `patches/apply_patches.py --check` (all 6 `.patch` files plus
+    both `stdarg.h` fixes reported missing). Notably this included the
+    boot-critical DPLL sync-timeout fix (`plib_clock.c`, item 1) - the board
+    would not have booted if flashed at that point.
+- Ran `patches/apply_patches.py` (no `--check`) to reapply: 5 of 6 `.patch`
+  files plus both `stdarg.h` fixes applied cleanly; `telnet.patch` reported
+  `FAILED` ("neither applies cleanly nor is already applied").
+- **Root-caused the `telnet.patch` failure:** not a real MCC content change -
+  `main()` in `apply_patches.py` applied the 6 `.patch` files *before* the two
+  `stdarg.h` fixes. `telnet.patch`'s first hunk sits immediately next to
+  `telnet.c`'s `#include <stdarg.h>` line (inserts `sys_time.h` right after
+  it), so when the recurring MCC `stdarg.h` generator bug (item 6) struck
+  again on this same regenerate, the hunk's context no longer matched at the
+  point the patch loop ran - even though the patch content itself was still
+  correct. Manually re-applied `telnet.patch`'s three hunks by hand (verified
+  identical to the patch file's content), then fixed the actual bug: reordered
+  `apply_patches.py`'s `main()` to run the `stdarg.h` fixes first, before the
+  `.patch` file loop. Re-verified with `--check`: all 8 entries `OK`.
+- Net result after the full round-trip: only two real deltas remain vs. the
+  prior commit - `TCPIP_TELNET_SKT_TX_BUFF_SIZE` `3072` → `3200`, and the
+  `apply_patches.py` ordering fix. All 6 hand-patched files matched their
+  prior committed content exactly once re-applied (confirmed via `git status`
+  showing no diff on any of them).
+
+---
+
 <!-- Append new dated entries above this line as work continues. -->

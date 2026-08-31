@@ -44,7 +44,7 @@ data:
       - children:
         - attributes:
             id: tcpipTcp
-            value: '18728'
+            value: '24104'
           type: Dynamic
         type: Values
       type: Integer

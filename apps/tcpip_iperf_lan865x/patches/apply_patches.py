@@ -134,10 +134,15 @@ def main():
         return 1
 
     rows = []
-    for patch_path in patch_files:
-        rows.append(apply_one_patch(root, patch_path, args.check))
+    # stdarg.h fixes run first: telnet.patch's first hunk sits right next to
+    # telnet.c's stdarg.h include (adds sys_time.h right after it), so if that
+    # recurring MCC bug (item 6) has struck again, telnet.patch's context
+    # won't match until stdarg.h is back - apply that fix before attempting
+    # the .patch files, not after.
     for label, rel_path, anchor in STDARG_FIXES:
         rows.append(apply_stdarg_fix(root, label, rel_path, anchor, args.check))
+    for patch_path in patch_files:
+        rows.append(apply_one_patch(root, patch_path, args.check))
 
     icon = {"OK": "[ok]", "APPLIED": "[+]", "WOULD APPLY": "[?]", "FAILED": "[!]"}
     print(f"\n{'patch':<28} {'status':<12} detail")

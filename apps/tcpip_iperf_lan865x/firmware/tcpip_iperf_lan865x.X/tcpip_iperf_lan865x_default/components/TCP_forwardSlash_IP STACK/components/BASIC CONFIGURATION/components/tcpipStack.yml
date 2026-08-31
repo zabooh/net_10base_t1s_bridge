@@ -24,7 +24,7 @@ data:
       - children:
         - attributes:
             id: tcpipStack
-            value: '55'
+            value: '60'
           type: Dynamic
         type: Values
       type: Integer
