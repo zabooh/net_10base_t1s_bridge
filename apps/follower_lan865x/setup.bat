@@ -71,7 +71,7 @@ rem The nbproject Makefile fragments are gitignored - they carry absolute paths
 rem of the machine that generated them, so a fresh clone has none. Generating
 rem them here means the first build.bat has nothing left to discover; build.bat
 rem does it too, so this step is a convenience, not a prerequisite. This
-rem project has no MCC model (see firmware\T1S_Follower.X\KEIN_MCC_MODELL.md) -
+rem project has no MCC model (see firmware\T1S_Follower.X\NO_MCC_MODEL.md) -
 rem genmk.bat only regenerates the Makefile fragments from the tracked
 rem nbproject\configurations.xml, it never touches firmware\src\config\default\.
 echo.

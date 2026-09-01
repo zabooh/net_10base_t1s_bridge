@@ -526,9 +526,9 @@ static void SYS_TIME_UpdateTime(uint32_t elapsedCounts)
     }
 }
 
-/* Von Hand deklariert, wie `mirror_eth0_tx_hook` im LAN865x-Treiber: ein Include
-   aus dem Anwendungsbaum wuerde diese generierte Datei staerker an das Projekt
-   binden als eine Zeile es tut. */
+/* Declared by hand, like `mirror_eth0_tx_hook` in the LAN865x driver: an
+   include from the application tree would tie this generated file more
+   tightly to the project than a single line does. */
 extern uint32_t PTP_TRIG_FixElapsed(uint32_t elapsed);
 
 static void SYS_TIME_PLIBCallback(uint32_t status, uintptr_t context)
@@ -542,22 +542,23 @@ static void SYS_TIME_PLIBCallback(uint32_t status, uintptr_t context)
 
     elapsedCount = SYS_TIME_GetElapsedCount(counterObj->hwTimerCurrentValue);
 
-    /* PATCH 2 (2026-08-17, t1s_100baset_bridge) - WURZELFIX ZU E41-E45.
+    /* PATCH 2 (2026-08-17, t1s_100baset_bridge) - ROOT-CAUSE FIX FOR E41-E45.
      *
-     * `SYS_TIME_GetElapsedCount()` bildet eine 16-Bit-Differenz und kann damit
-     * hoechstens 65536 Ticks (1092,27 us) ausdruecken.  Kommt dieser Callback
-     * spaeter - gemessen bis 1605 us -, wird die Differenz modulo 65536 addiert und
-     * ein ganzer Ueberlauf ist DAUERHAFT verloren; downstream sind das -1 092 964 ns
-     * Residuen, eine Neuverankerung und ~40 us Phasenwanderung.
+     * `SYS_TIME_GetElapsedCount()` forms a 16-bit difference and can
+     * therefore express at most 65536 ticks (1092.27 us). If this callback
+     * fires later than that - measured up to 1605 us -, the difference gets
+     * added modulo 65536 and an entire wraparound is PERMANENTLY lost;
+     * downstream that shows up as -1,092,964 ns of residual error, a
+     * re-anchoring event, and ~40 us of phase drift.
      *
-     * `PTP_TRIG_FixElapsed()` ergaenzt die fehlenden Ueberlaeufe mit dem
-     * Zykluszaehler des Debug-Cores als unabhaengigem Zeugen (Erklaerung dort).
-     * Absichtlich NUR hier und nicht in `SYS_TIME_Counter64Get()`: dort heilt die
-     * Zweideutigkeit beim naechsten Callback von selbst.
+     * `PTP_TRIG_FixElapsed()` supplies the missing wraparounds using the
+     * debug core's cycle counter as an independent witness (explained
+     * there). Deliberately only here and not in `SYS_TIME_Counter64Get()`:
+     * there, the ambiguity self-heals on the next callback.
      *
-     * Bei einer Regenerierung durch MCC geht diese Zeile verloren.  Erkennbar wird
-     * das an `tbase pps`: `wrap fix` beginnt dann wieder zu zaehlen, weil die
-     * zweite Sicherung im 1PPS-Pfad einspringt. */
+     * This line is lost on a regeneration by MCC. That shows up in
+     * `tbase pps`: `wrap fix` then starts counting again, because the
+     * second safeguard in the 1PPS path kicks in instead. */
     elapsedCount = PTP_TRIG_FixElapsed(elapsedCount);
 
     /* PATCH (2026-08-12, t1s_100baset_bridge).  swCounter64 and

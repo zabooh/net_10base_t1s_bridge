@@ -172,14 +172,14 @@
     This macro defines the maximum depth of the command history.
 
   Remarks:
-    HANDPATCH 2026-08-24: 4 -> 15.  Vier Befehle sind bei der Bedienung dieses Projekts
-    zu wenig - eine Vorfuehrung besteht aus sechs bis acht Kommandos, und man tippt sie
-    sonst neu.  Der Ringpuffer wird in SYS_CMD_Initialize() ueber
-    sizeof(histArray)/sizeof(*histArray) aufgebaut, es ist also nirgends eine 4 fest
-    verdrahtet; geprueft mit grep auf histArray/histCmdNode.
+    HANDPATCH 2026-08-24: 4 -> 15.  Four commands were too few for how this project is
+    actually used - a demo runs through six to eight commands, and without this you'd
+    otherwise have to retype them.  The ring buffer is sized in SYS_CMD_Initialize()
+    via sizeof(histArray)/sizeof(*histArray), so nowhere is a 4 hardwired; verified
+    with a grep for histArray/histCmdNode.
 
-    Preis: je Eintrag 2 Zeiger + SYS_CMD_MAX_LENGTH+1 = 89 Byte (auf 92 aufgerundet),
-    also 11 * 92 = rund 1 KB RAM je Konsoleninstanz (SYS_CMD_DEVICE_MAX_INSTANCES).
+    Cost: 2 pointers + SYS_CMD_MAX_LENGTH+1 = 89 bytes per entry (rounded up to 92),
+    so 11 * 92 = roughly 1 KB RAM per console instance (SYS_CMD_DEVICE_MAX_INSTANCES).
 
 */
 #define         COMMAND_HISTORY_DEPTH   15

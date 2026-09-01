@@ -41,48 +41,48 @@
 #include "plib_clock.h"
 #include "device.h"
 
-/* --- HANDPATCH auf generiertem Code -----------------------------------------
- * Follower seit 2026-08-12, Bridge seit 2026-08-22.  Diese Datei ist in BEIDEN
- * Projekten byte-identisch; wer sie in einem aendert, aendert sie im anderen mit.
- * Warum: die MCU-Zeitbasis hing am open-loop DFLL48M - kein XOSC, kein
- * DFLL-Closed-Loop, und OSCCTRL_Initialize()/DFLL_Initialize() waren leer.
- * Gemessen +601 ppm bzw. +783 ppm gegen die Master-Wallclock mit ~180 ppm
- * Wanderung in 20 Minuten. Damit ist SYS_TIME als Frequenzreferenz unbrauchbar
- * und PTP_TIMEBASE_PLAN.md Phase A nicht messbar (test_results.md, Phase A).
+/* --- HAND-PATCH on generated code --------------------------------------------
+ * Follower since 2026-08-12, bridge since 2026-08-22.  This file is byte-identical
+ * in BOTH projects; whoever changes it in one changes it in the other too.
+ * Why: the MCU time base was hanging off the open-loop DFLL48M - no XOSC, no
+ * DFLL closed loop, and OSCCTRL_Initialize()/DFLL_Initialize() were empty.
+ * Measured +601 ppm and +783 ppm respectively against the master wall clock, with
+ * ~180 ppm drift over 20 minutes. That makes SYS_TIME unusable as a frequency
+ * reference, and PTP_TIMEBASE_PLAN.md Phase A unmeasurable (test_results.md, Phase A).
  *
- * Was: XOSC0 im EXTERNTAKT-Modus (XTALEN=0) als DPLL0-Referenz.
+ * What: XOSC0 in external-clock mode (XTALEN=0) as the DPLL0 reference.
  *
- * Auf XIN0 liegen 50 MHz, NICHT die 12 MHz. Gemessen, nicht angenommen:
- * GCLK-Generator 3 aus XOSC0 -> TC2 (32 Bit, GCLK-Kanal 26, unabhaengig von
- * TC0/SYS_TIME) -> 1 100 457 527 Zaehlwerte in 21,945 s = 50,147 MHz. Es ist
- * also der DSC1001CI2-050.0000, der RMII-Referenztakt. Ein erster Versuch mit
- * der 12-MHz-Annahme (DIV=5) liess den DPLL nicht einrasten und das Board nicht
- * booten.
+ * XIN0 carries 50 MHz, NOT 12 MHz. Measured, not assumed:
+ * GCLK generator 3 from XOSC0 -> TC2 (32-bit, GCLK channel 26, independent of
+ * TC0/SYS_TIME) -> 1 100 457 527 counts in 21,945 s = 50,147 MHz. So it is
+ * the DSC1001CI2-050.0000, the RMII reference clock. An initial attempt with
+ * the 12 MHz assumption (DIV=5) did not let the DPLL lock and the board did not
+ * boot.
  *
- * Rechnung: DIV=9  -> 50 MHz / (2*(9+1)) = 2,5 MHz Referenz (Bereich 32 kHz bis
- *           3,2 MHz), LDR=47 -> 2,5 MHz * 48 = 120 MHz exakt, ohne LDRFRAC.
- *           GCLK0 = 120 MHz und GCLK1 = 60 MHz bleiben damit unveraendert.
+ * Calculation: DIV=9  -> 50 MHz / (2*(9+1)) = 2,5 MHz reference (range 32 kHz to
+ *           3,2 MHz), LDR=47 -> 2,5 MHz * 48 = 120 MHz exact, without LDRFRAC.
+ *           GCLK0 = 120 MHz and GCLK1 = 60 MHz remain unchanged as a result.
  *
- * BRIDGE: PA14 ist XIN0 UND der RMII-Referenztakt des GMAC.  Datenblatt 6.2.1
- * sagt, Oszillatoren seien "not mapped to the normal PORT functions" - die
- * Sorge war also, ein eingeschaltetes XOSC0 nehme dem GMAC seinen Takt und
- * eth1 stirbt.  Am laufenden Board gemessen (_probe_xosc0_gmac.py): XOSC0 an,
- * XOSCRDY0 gesetzt (STATUS 0x00010100 -> 0x00010101), eth1 antwortete
- * durchgehend 4/4, nach dem Zuruecknehmen 6/6.  Beides koexistiert auf PA14.
- * Auf dem Follower faellt das ohnehin nicht auf - dort ist der GMAC kompiliert,
- * aber ohne aktives Interface.
+ * BRIDGE: PA14 is XIN0 AND the GMAC's RMII reference clock.  Datasheet 6.2.1
+ * says oscillators are "not mapped to the normal PORT functions" - so the
+ * concern was that an enabled XOSC0 would steal the GMAC's clock and
+ * eth1 would die.  Measured on the running board (_probe_xosc0_gmac.py): XOSC0 on,
+ * XOSCRDY0 set (STATUS 0x00010100 -> 0x00010101), eth1 responded
+ * consistently 4/4, and 6/6 after reverting it.  Both coexist on PA14.
+ * On the follower this doesn't show up anyway - there the GMAC is compiled in,
+ * but without an active interface.
  *
- * MCC: plib_clock.c IST generiertes Gebiet und steht in der Hash-Map der
- * Bridge - dieser Patch ist dort also eine Abweichung.  Das war bis zum
- * 2026-08-22 ein Problem (ein "Generate Code" haette ihn lautlos entfernt) und
- * ist es nicht mehr: die Bridge verlaesst MCC, der frueher hier empfohlene Weg
- * ueber den Clock Configurator entfaellt.  Er waere ohnehin teuer gewesen -
- * MCC erzeugt UNBESCHRAENKTE Warteschleifen, die beschraenkten Guards unten und
- * der DFLL-Rueckfall waeren damit verloren gegangen.  Ein nicht anlaufender
- * Oszillator haengt so den Boot auf, statt auf den alten Pfad zurueckzufallen.
+ * MCC: plib_clock.c IS generated territory and is tracked in the bridge's
+ * hash map - so this patch is a deviation there.  That was a problem until
+ * 2026-08-22 (a "Generate Code" would have silently removed it), and
+ * no longer is: the bridge is leaving MCC, so the route previously recommended
+ * here via the Clock Configurator no longer applies.  It would have been costly anyway -
+ * MCC generates UNBOUNDED wait loops, and the bounded guards below and
+ * the DFLL fallback would have been lost as a result.  An oscillator that fails
+ * to start up then hangs the boot, instead of falling back to the old path.
  *
- * PRUEFWERTE nach dem Flashen (beide Boards):
- *   dump 0x40001014 -> 02 00 00 00   XOSCCTRL[0]: ENABLE, ONDEMAND geloescht
+ * VERIFICATION VALUES after flashing (both boards):
+ *   dump 0x40001014 -> 02 00 00 00   XOSCCTRL[0]: ENABLE, ONDEMAND cleared
  *   dump 0x40001038 -> 40 00 09 00   DPLLCTRLB:  REFCLK=2 (XOSC0), DIV=9
  * -------------------------------------------------------------------------- */
 static bool clk_xosc0_ready = false;
@@ -91,9 +91,9 @@ static void OSCCTRL_Initialize(void)
 {
     uint32_t guard;
 
-    /* ENABLE, XTALEN=0 (Externtakt), ONDEMAND=0 (laeuft immer), STARTUP=0:
-     * ein anliegender Takt braucht keine Oszillator-Anlaufzeit. Ein zu grosses
-     * STARTUP liess XOSCRDY0 beim ersten Probe-Versuch scheinbar ausbleiben. */
+    /* ENABLE, XTALEN=0 (external clock), ONDEMAND=0 (always running), STARTUP=0:
+     * an already-applied clock needs no oscillator startup time. Too large a
+     * STARTUP value apparently kept XOSCRDY0 from appearing on the first probe attempt. */
     OSCCTRL_REGS->OSCCTRL_XOSCCTRL[0] = OSCCTRL_XOSCCTRL_ENABLE_Msk;
 
     for (guard = 0u; guard < 1000000u; guard++)
@@ -127,10 +127,10 @@ static void FDPLL0_Initialize(void)
 
     /****************** DPLL0 Initialization  *********************************/
 
-    /* Versuch 1: XOSC0 als Referenz. Der Lock-Wartelauf ist BEGRENZT - beim
-     * ersten Anlauf dieses Patches (mit der falschen 12-MHz-Annahme) rastete der
-     * DPLL nicht ein und der unbegrenzte Wartelauf machte das Board tot. Ein
-     * falscher Takt darf hoechstens den Ruecksprung auf den DFLL-Weg kosten. */
+    /* Attempt 1: XOSC0 as the reference. The lock wait loop is BOUNDED - on
+     * the first run of this patch (with the wrong 12 MHz assumption) the
+     * DPLL did not lock, and the unbounded wait loop killed the board. A
+     * wrong clock must cost at most the fallback to the DFLL path. */
     if (clk_xosc0_ready)
     {
         uint32_t guard;
@@ -164,9 +164,9 @@ static void FDPLL0_Initialize(void)
 
         if (guard >= 1000000u)
         {
-            /* Kein Lock: DPLL abschalten, XOSC0 aufgeben, unten den DFLL-Weg
-             * nehmen. Das Board bootet dann mit der schlechten, aber
-             * funktionierenden Zeitbasis - statt gar nicht. */
+            /* No lock: disable the DPLL, give up on XOSC0, take the DFLL path
+             * below instead. The board then boots with the poor but
+             * functioning time base - instead of not booting at all. */
             OSCCTRL_REGS->DPLL[0].OSCCTRL_DPLLCTRLA = 0U;
             while((OSCCTRL_REGS->DPLL[0].OSCCTRL_DPLLSYNCBUSY & OSCCTRL_DPLLSYNCBUSY_ENABLE_Msk) == OSCCTRL_DPLLSYNCBUSY_ENABLE_Msk )
             {
@@ -177,8 +177,8 @@ static void FDPLL0_Initialize(void)
         }
     }
 
-    /* Versuch 2 / Rueckfall: der urspruenglich generierte Weg, Referenz ist der
-     * GCLK-Kanal 1 aus Generator 2 (DFLL48M/48 = 1 MHz), LDR=119 -> 120 MHz. */
+    /* Attempt 2 / fallback: the originally generated path, the reference is
+     * GCLK channel 1 from generator 2 (DFLL48M/48 = 1 MHz), LDR=119 -> 120 MHz. */
     if (!clk_xosc0_ready)
     {
         /* Configure DPLL    */

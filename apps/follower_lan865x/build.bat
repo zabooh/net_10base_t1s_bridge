@@ -15,7 +15,7 @@ setlocal EnableDelayedExpansion
 :: for the bridge_lan865x_100baseT project in this repo).
 ::
 :: This project has NO MCC model by design - see
-:: firmware\T1S_Follower.X\KEIN_MCC_MODELL.md. Build entirely from the
+:: firmware\T1S_Follower.X\NO_MCC_MODEL.md. Build entirely from the
 :: tracked nbproject\configurations.xml; never run MCC "Generate Code"
 :: against firmware\src\config\default\ here.
 ::

@@ -1086,9 +1086,9 @@ bool PPS_CliTry(int argc, char **argv)
     {
         if (!strcmp(argv[3], "led"))
         {
-            /* Richtung erst hier setzen, damit die LED im Normalbetrieb
-               unangetastet bleibt.  OUTSET vor DIRSET: sonst blitzt sie beim
-               Umschalten (dieselbe Reihenfolge wie im BSP-Rezept). */
+            /* Set the direction only here, so the LED stays untouched during
+               normal operation.  OUTSET before DIRSET: otherwise it flashes
+               briefly when switching (same order as in the BSP recipe). */
             PORT_REGS->GROUP[BOARD_LED2_GROUP].PORT_OUTSET = BOARD_LED2_MASK;
             PORT_REGS->GROUP[BOARD_LED2_GROUP].PORT_DIRSET = BOARD_LED2_MASK;
             s_isr_mark = PPS_MARK_LED;
